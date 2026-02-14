@@ -1,0 +1,26 @@
+# Sensitive environment and credentials
+.env
+.env.*
+!.env.sample
+credentials.json
+token.json
+*secret*
+*.pem
+*.key
+*.p12
+
+# Local token stores and runtime auth artifacts
+.ppw/
+tokens.json
+tokens-*.json
+
+# Local agent/editor state
+.claude/settings.local.json
+
+# Local debug/probe artifacts that may include auth output
+probe
+*.log
+
+# OS and temporary artifacts
+.DS_Store
+.tmp/

@@ -1,0 +1,23 @@
+# Intermediates
+.tmp/
+*.tmp
+
+# Secrets
+.env
+.env.*
+credentials.json
+token.json
+
+# OS noise
+.DS_Store
+
+# Go build outputs
+bin/
+dist/
+*.exe
+
+# Runtime state
+state/
+
+# Style corpus (personal content)
+config/style_corpus.json
