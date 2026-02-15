@@ -10,7 +10,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"photography-publishing-workflow/internal/ai"
 	"photography-publishing-workflow/internal/pipeline"
 	"photography-publishing-workflow/internal/watcher"
 )
@@ -37,26 +36,33 @@ Press Ctrl+C to stop watching.`,
 				return fmt.Errorf("--dir is required")
 			}
 
-			cliPath := os.Getenv("CLAUDE_CLI_PATH")
-			provider := ai.NewClaudeCLI(cliPath)
+			provider := providerForRun(false)
+			logOutput, closeLog, logPath, err := commandLogOutput(os.Stderr)
+			if err != nil {
+				return err
+			}
+			defer closeLog()
+			writeLogLine(logOutput, "[watcher] Logging to %s", logPath)
 
 			p := pipeline.New(provider, pipeline.Options{
 				CorpusPath:   corpusPath,
 				SkipLocation: skipLocation,
 				SkipMusic:    skipMusic,
+				LogOutput:    logOutput,
 			})
 
 			handler := func(ctx context.Context, postDir string) {
 				result := p.Run(ctx, postDir)
 				if result.Error != nil {
-					fmt.Fprintf(os.Stderr, "Pipeline error for %s: %v\n", result.PostID, result.Error)
+					writeLogLine(logOutput, "[pipeline] ERROR %s: %v", result.PostID, result.Error)
 				} else {
-					fmt.Printf("Pipeline complete: %s → %s\n", result.PostID, result.FinalState)
+					writeLogLine(logOutput, "[pipeline] complete: %s -> %s", result.PostID, result.FinalState)
 				}
 			}
 
 			w, err := watcher.New(dir, handler, watcher.Options{
-				Debounce: debounce,
+				Debounce:  debounce,
+				LogOutput: logOutput,
 			})
 			if err != nil {
 				return fmt.Errorf("create watcher: %w", err)

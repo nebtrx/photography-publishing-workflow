@@ -32,13 +32,23 @@ func runDefault() error {
 
 	// Build optional dependencies from config + env
 	eventCh := make(chan tea.Msg, 256)
-	logWriter := tui.NewEventLogWriter(eventCh)
+	eventLogWriter := tui.NewEventLogWriter(eventCh)
+	logWriter, closeLog, logPath, err := commandLogOutput(eventLogWriter)
+	if err != nil {
+		eventCh <- tui.AppLogMsg{Line: fmt.Sprintf("[runtime] WARN: persistent logging disabled: %v", err)}
+		logWriter = eventLogWriter
+		closeLog = func() error { return nil }
+	} else {
+		eventCh <- tui.AppLogMsg{Line: fmt.Sprintf("[runtime] Logging to %s", logPath)}
+	}
+	defer closeLog()
+
 	opts := buildAppOptions(cfg, eventCh, logWriter)
 
 	model := tui.NewApp(cfg, cfgErrStr, opts)
 	p := tea.NewProgram(model, tea.WithAltScreen())
-	_, err := p.Run()
-	return err
+	_, runErr := p.Run()
+	return runErr
 }
 
 // loadConfig tries to load the ppw config file.
@@ -101,7 +111,7 @@ func buildPublisher(cfg *config.Config, logOutput io.Writer) *publisher.Publishe
 		return nil // R2 not configured — publishing disabled
 	}
 
-	igClient, tm := buildInstagramClientWithMeta()
+	igClient, tm := buildInstagramClientWithMeta(logOutput)
 	if igClient == nil {
 		return nil
 	}
@@ -109,19 +119,19 @@ func buildPublisher(cfg *config.Config, logOutput io.Writer) *publisher.Publishe
 	ctx := context.Background()
 	r2, err := hosting.NewR2(ctx, r2Cfg)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: R2 connection failed: %v\n", err)
+		writeLogLine(logOutput, "[runtime] WARN: R2 connection failed: %v", err)
 		return nil
 	}
 
 	fbEnabled, threadsEnabled, err := parseDestinations(defaultDestinations())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: invalid syndication destinations: %v\n", err)
+		writeLogLine(logOutput, "[runtime] WARN: invalid syndication destinations: %v", err)
 		fbEnabled, threadsEnabled = false, false
 	}
 
 	opts, err := buildSyndicationOptions(ctx, tm, fbEnabled, threadsEnabled, envBool("STRICT_SYNDICATION"), false)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: syndication setup failed: %v\n", err)
+		writeLogLine(logOutput, "[runtime] WARN: syndication disabled due setup failure: %v", err)
 		opts = publisher.Options{}
 	}
 
@@ -140,18 +150,25 @@ func buildAIProvider() ai.Provider {
 	}
 }
 
+func providerForRun(dryRun bool) ai.Provider {
+	if dryRun {
+		return nil
+	}
+	return buildAIProvider()
+}
+
 // buildInstagramClient creates an Instagram client, preferring auth-managed mode.
 func buildInstagramClient() *instagram.Client {
-	client, _ := buildInstagramClientWithMeta()
+	client, _ := buildInstagramClientWithMeta(os.Stderr)
 	return client
 }
 
 // buildInstagramClientWithMeta returns the IG client and optional auth manager used for managed auth.
-func buildInstagramClientWithMeta() (*instagram.Client, *authn.Manager) {
+func buildInstagramClientWithMeta(logOutput io.Writer) (*instagram.Client, *authn.Manager) {
 	userID := os.Getenv("INSTAGRAM_USER_ID")
 	authMgr, err := buildAuthManager()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: auth manager setup failed: %v\n", err)
+		writeLogLine(logOutput, "[runtime] WARN: auth manager setup failed: %v", err)
 	}
 
 	// Try auth-managed mode (store-backed token lifecycle).
@@ -162,9 +179,9 @@ func buildInstagramClientWithMeta() (*instagram.Client, *authn.Manager) {
 			nil,
 		)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: store-backed auth setup failed: %v\n", err)
+			writeLogLine(logOutput, "[runtime] WARN: store-backed auth setup failed: %v", err)
 		} else {
-			fmt.Fprintln(os.Stderr, "[publish] Using managed auth (token store + automatic refresh)")
+			writeLogLine(logOutput, "[publish] Using managed auth (token store + automatic refresh)")
 			return client, authMgr
 		}
 	}
@@ -174,6 +191,6 @@ func buildInstagramClientWithMeta() (*instagram.Client, *authn.Manager) {
 	if err != nil {
 		return nil, nil // Instagram not configured
 	}
-	fmt.Fprintln(os.Stderr, "[publish] Using legacy static token auth (run `ppw auth login` to migrate)")
+	writeLogLine(logOutput, "[publish] Using legacy static token auth (run `ppw auth login` to migrate)")
 	return client, nil
 }

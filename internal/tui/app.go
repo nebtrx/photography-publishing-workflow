@@ -186,9 +186,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case PipelineCompleteMsg:
 		m.pipelining = ""
 		if msg.Err != nil {
-			m.statusMsg = errorTextStyle.Render(fmt.Sprintf("Pipeline error: %v", msg.Err))
+			m.statusMsg = fmt.Sprintf("Pipeline error: %v", msg.Err)
 		} else {
-			m.statusMsg = successTextStyle.Render(fmt.Sprintf("New post ready: %s", msg.PostID))
+			m.statusMsg = fmt.Sprintf("New post ready: %s", msg.PostID)
 			m.loadData()
 		}
 		// Re-subscribe to watcher channel
@@ -197,10 +197,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case PublishCompleteMsg:
 		m.publishing = ""
 		if msg.Err != nil {
-			m.statusMsg = errorTextStyle.Render(fmt.Sprintf("Publish error: %v", msg.Err))
+			m.statusMsg = fmt.Sprintf("Publish error: %v", msg.Err)
 			m.loadData()
 		} else {
-			m.statusMsg = successTextStyle.Render(fmt.Sprintf("Published: %s", msg.Permalink))
+			m.statusMsg = fmt.Sprintf("Published: %s", msg.Permalink)
 			m.loadData()
 			// Auto-archive if archiver is configured
 			if m.arch != nil && msg.ManifestPath != "" {
@@ -211,9 +211,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ArchiveCompleteMsg:
 		if msg.Err != nil {
-			m.statusMsg = errorTextStyle.Render(fmt.Sprintf("Archive error: %v", msg.Err))
+			m.statusMsg = fmt.Sprintf("Archive error: %v", msg.Err)
 		} else {
-			m.statusMsg = successTextStyle.Render(fmt.Sprintf("Archived: %s", msg.PostID))
+			m.statusMsg = fmt.Sprintf("Archived: %s", msg.PostID)
 		}
 		m.loadData()
 		return m, nil
@@ -434,7 +434,7 @@ func (m AppModel) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			post.Review.FinalCaption = m.editor.Value()
 			post.Review.CaptionEdited = true
 			post.Write(m.editingPost.Path)
-			m.statusMsg = successTextStyle.Render("Caption saved")
+			m.statusMsg = "Caption saved"
 		}
 		m.overlay = OverlayNone
 		return m, nil
@@ -465,7 +465,7 @@ func (m AppModel) updateDialog(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, runPublish(m.pub, postPath)
 			}
 			if m.pub == nil {
-				m.statusMsg = warningTextStyle.Render("Approved (publish manually — publisher not configured)")
+				m.statusMsg = "Approved (publish manually - publisher not configured)"
 			}
 			return m, nil
 		case "q":
@@ -513,13 +513,13 @@ func (m *AppModel) approvePost(publishMode string) {
 	}
 
 	if err := post.Manifest.Transition(manifest.StateApproved); err != nil {
-		m.statusMsg = errorTextStyle.Render(fmt.Sprintf("Error: %v", err))
+		m.statusMsg = fmt.Sprintf("Error: %v", err)
 		return
 	}
 	post.Manifest.Write(post.Path)
 
 	if publishMode == "queued" {
-		m.statusMsg = successTextStyle.Render(fmt.Sprintf("Queued: %s", post.Manifest.ID))
+		m.statusMsg = fmt.Sprintf("Queued: %s", post.Manifest.ID)
 	}
 
 	m.loadData()
@@ -539,11 +539,11 @@ func (m *AppModel) rejectPost() {
 	post.Manifest.Review.Decision = "rejected"
 
 	if err := post.Manifest.Transition(manifest.StateRejected); err != nil {
-		m.statusMsg = errorTextStyle.Render(fmt.Sprintf("Error: %v", err))
+		m.statusMsg = fmt.Sprintf("Error: %v", err)
 		return
 	}
 	post.Manifest.Write(post.Path)
-	m.statusMsg = warningTextStyle.Render(fmt.Sprintf("Rejected: %s", post.Manifest.ID))
+	m.statusMsg = fmt.Sprintf("Rejected: %s", post.Manifest.ID)
 	m.loadData()
 	if m.pendingCursor >= len(m.pendingPosts) && m.pendingCursor > 0 {
 		m.pendingCursor--
@@ -575,7 +575,7 @@ func (m *AppModel) reEnrich() {
 	post.Manifest.State = manifest.StateValidated
 	post.Manifest.Enrichment = nil
 	post.Manifest.Write(post.Path)
-	m.statusMsg = warningTextStyle.Render(fmt.Sprintf("Re-enrich queued: %s", post.Manifest.ID))
+	m.statusMsg = fmt.Sprintf("Re-enrich queued: %s", post.Manifest.ID)
 	m.loadData()
 }
 
@@ -589,7 +589,7 @@ func (m *AppModel) dequeuePost() {
 	post.Manifest.Review.Decision = ""
 	post.Manifest.Review.PublishMode = ""
 	post.Manifest.Write(post.Path)
-	m.statusMsg = warningTextStyle.Render(fmt.Sprintf("Dequeued: %s", post.Manifest.ID))
+	m.statusMsg = fmt.Sprintf("Dequeued: %s", post.Manifest.ID)
 	m.loadData()
 	if m.queueCursor >= len(m.queuePosts) && m.queueCursor > 0 {
 		m.queueCursor--
@@ -644,7 +644,7 @@ func (m *AppModel) publishSelected() tea.Cmd {
 		return nil
 	}
 	if m.pub == nil {
-		m.statusMsg = errorTextStyle.Render("Publisher not configured (need R2 + Instagram env vars)")
+		m.statusMsg = "Publisher not configured (need R2 + Instagram env vars)"
 		return nil
 	}
 	m.publishing = post.Manifest.ID
@@ -657,7 +657,7 @@ func (m *AppModel) publishAllQueued() tea.Cmd {
 		return nil
 	}
 	if m.pub == nil {
-		m.statusMsg = errorTextStyle.Render("Publisher not configured (need R2 + Instagram env vars)")
+		m.statusMsg = "Publisher not configured (need R2 + Instagram env vars)"
 		return nil
 	}
 	m.publishing = m.queuePosts[0].Manifest.ID
@@ -1098,8 +1098,15 @@ func (m AppModel) renderStatusBar(w int) string {
 		}
 		left = strings.Join(parts, " │ ")
 	}
+	left = singleLine(left)
 
 	right := "ppw"
+	maxLeft := w - lipgloss.Width(right) - 3
+	if maxLeft < 1 {
+		maxLeft = 1
+	}
+	left = truncate(left, maxLeft)
+
 	gap := w - lipgloss.Width(left) - lipgloss.Width(right) - 2
 	if gap < 1 {
 		gap = 1
@@ -1265,6 +1272,13 @@ func truncate(s string, max int) string {
 		return s[:max-3] + "..."
 	}
 	return s
+}
+
+func singleLine(s string) string {
+	s = strings.ReplaceAll(s, "\r", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\t", " ")
+	return strings.Join(strings.Fields(s), " ")
 }
 
 func (m *AppModel) appendRuntimeLog(line string) {

@@ -8,7 +8,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"photography-publishing-workflow/internal/ai"
 	"photography-publishing-workflow/internal/pipeline"
 )
 
@@ -34,17 +33,21 @@ After running, the manifest will be in pending_review state, ready for ppw revie
 				return fmt.Errorf("--dir is required")
 			}
 
-			var provider ai.Provider
-			if !dryRun {
-				cliPath := os.Getenv("CLAUDE_CLI_PATH")
-				provider = ai.NewClaudeCLI(cliPath)
+			provider := providerForRun(dryRun)
+
+			logOutput, closeLog, logPath, err := commandLogOutput(os.Stderr)
+			if err != nil {
+				return err
 			}
+			defer closeLog()
+			writeLogLine(logOutput, "[pipeline] Logging to %s", logPath)
 
 			p := pipeline.New(provider, pipeline.Options{
 				CorpusPath:   corpusPath,
 				SkipLocation: skipLocation,
 				SkipMusic:    skipMusic,
 				DryRun:       dryRun,
+				LogOutput:    logOutput,
 			})
 
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)

@@ -28,7 +28,6 @@ func main() {
 	root.AddCommand(pipelineCmd())
 	root.AddCommand(watchCmd())
 	root.AddCommand(authCmd())
-	root.AddCommand(metaCmd())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

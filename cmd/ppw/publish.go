@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -56,6 +58,13 @@ Legacy fallback (temporary during migration):
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 
+			logOutput, closeLog, logPath, err := commandLogOutput(os.Stderr)
+			if err != nil {
+				return err
+			}
+			defer closeLog()
+			writeLogLine(logOutput, "[publish] Logging to %s", logPath)
+
 			// Set up hosting
 			var host hosting.Host
 			if dryRun {
@@ -78,7 +87,7 @@ Legacy fallback (temporary during migration):
 			if dryRun {
 				ig = &dryRunInstagram{}
 			} else {
-				igClient, tokenManager := buildInstagramClientWithMeta()
+				igClient, tokenManager := buildInstagramClientWithMeta(logOutput)
 				if igClient == nil {
 					return fmt.Errorf("Instagram client: set INSTAGRAM_USER_ID and run `ppw auth login` (or provide legacy INSTAGRAM_ACCESS_TOKEN)")
 				}
@@ -96,6 +105,7 @@ Legacy fallback (temporary during migration):
 				return fmt.Errorf("syndication options: %w", err)
 			}
 			opts.DryRun = dryRun
+			opts.LogOutput = logOutput
 
 			pub := publisher.New(host, ig, opts)
 
@@ -114,6 +124,7 @@ Legacy fallback (temporary during migration):
 				if m.Publishing.InstagramStoryID != "" {
 					fmt.Println("Story also published.")
 				}
+				printSyndicationSummary(os.Stdout, m)
 			}
 
 			return nil
@@ -127,6 +138,34 @@ Legacy fallback (temporary during migration):
 	cmd.Flags().BoolVar(&strictSyn, "strict-syndication", envBool("STRICT_SYNDICATION"), "Fail the run if any enabled syndication destination fails")
 
 	return cmd
+}
+
+func printSyndicationSummary(out io.Writer, m *manifest.Manifest) {
+	if m == nil || m.Publishing == nil || m.Publishing.Syndication == nil {
+		return
+	}
+
+	printTarget := func(name string, t *manifest.SyndicationTarget) {
+		if t == nil || !t.Enabled {
+			return
+		}
+		status := t.Status
+		if status == "" {
+			status = "unknown"
+		}
+		line := fmt.Sprintf("%s: %s", name, status)
+		if t.Error != "" {
+			line += " (" + t.Error + ")"
+		} else if t.Permalink != "" {
+			line += " (" + t.Permalink + ")"
+		} else if t.PostID != "" {
+			line += " (post_id=" + t.PostID + ")"
+		}
+		fmt.Fprintf(out, "Syndication %s\n", line)
+	}
+
+	printTarget("facebook", m.Publishing.Syndication.Facebook)
+	printTarget("threads", m.Publishing.Syndication.Threads)
 }
 
 // dryRunInstagram is a no-op Instagram client for dry-run mode.

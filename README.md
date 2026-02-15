@@ -84,13 +84,9 @@ Current key groups:
 - Platform IDs/config (`INSTAGRAM_USER_ID`, `META_APP_ID`, `META_APP_SECRET`, `META_PAGE_ID`, `THREADS_USER_ID`)
 - Optional Threads app override when Threads uses a different Meta app (`THREADS_APP_ID`, `THREADS_APP_SECRET`)
 - Token store path override (`PPW_TOKEN_STORE`, default `~/.ppw/tokens.json`)
+- Runtime log file override (`PPW_LOG_FILE`, default `~/.ppw/ppw.log`)
 - Syndication behavior (`PUBLISH_DESTINATIONS`, `STRICT_SYNDICATION`)
 - Legacy/manual token vars (temporary during auth automation migration)
-
-Legacy command note:
-
-- `ppw meta auth ...` is now deprecated.
-- Use `ppw auth login|status|logout` instead.
 
 ## How to Navigate This Repo
 

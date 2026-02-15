@@ -612,3 +612,56 @@ Store value indicated `meta.user_expires_at` was written near current time.
   - bottom log panel (~25%-30% height)
 - Route runtime logs through TUI-safe message pipeline (no raw stdout/stderr writes in active TUI mode).
 - Harden geometry clamps and line wrapping to prevent layout corruption.
+
+## 2026-02-15 — AI execution recovery + syndication observability + meta command removal
+**Context:** Latest batch run exposed four operational gaps:
+1) AI enrichment not running in all runtime paths,
+2) facebook/threads syndication failures hard to see when non-strict,
+3) no durable runtime logs,
+4) deprecated `ppw meta auth` still present.
+
+**Directive/DOE artifacts:**
+- `directives/ai_syndication_observability_and_meta_cleanup.md`
+- `directives/orchestration_ai_syndication_observability_and_meta_cleanup.md`
+
+**Implemented:**
+- AI provider wiring unified:
+  - `cmd/ppw/pipeline.go` and `cmd/ppw/watch.go` now use shared provider selection (`providerForRun` / `buildAIProvider`) instead of hardcoded Claude.
+- Durable runtime logs added:
+  - new `cmd/ppw/logging.go` with default log file `~/.ppw/ppw.log` and env override `PPW_LOG_FILE`.
+  - TUI runtime logs now fan out to both in-app runtime panel and persistent file.
+  - CLI runtime paths (`pipeline`, `watch`, `publish`) now also write to persistent log file.
+- TUI render hardening for runtime error text:
+  - `internal/tui/app.go` status bar now normalizes status text to single-line and truncates it to available width.
+  - status messages now store plain text (no embedded ANSI style rendering), preventing multiline overflow from AI error payloads.
+- Syndication visibility improved:
+  - `cmd/ppw/default.go` now logs explicit warning when syndication setup is disabled/falls back.
+  - `cmd/ppw/publish.go` prints per-target syndication summary after publish (`facebook` / `threads` status + error/permalink).
+- Deprecated command removed:
+  - removed `meta` command registration from `cmd/ppw/main.go`.
+  - deleted `cmd/ppw/meta.go`.
+
+**Docs/env updates:**
+- `.env.sample`:
+  - added `PPW_LOG_FILE` contract.
+  - removed legacy text pointing to `ppw meta auth`.
+- `.env`:
+  - added commented `PPW_LOG_FILE` placeholder.
+- `README.md`:
+  - added runtime log override env var docs.
+  - removed deprecated `ppw meta auth` note.
+
+**Tests added:**
+- `cmd/ppw/logging_test.go` (runtime log path + file writer fan-out)
+- `cmd/ppw/provider_wiring_test.go` (provider selection: claude/codex/dry-run)
+- `cmd/ppw/publish_test.go` (syndication summary output)
+- `internal/tui/app_status_test.go` (single-line status normalization)
+
+**Validation:**
+- `/opt/homebrew/bin/go mod tidy` passed
+- `/opt/homebrew/bin/go test ./...` passed
+- `/opt/homebrew/bin/go build -o bin/ppw ./cmd/ppw` passed
+- `./bin/ppw --help` confirms `meta` command no longer exists
+
+**Operational note:**
+- `make build` can still fail if shell resolves old Go (`/usr/local/bin/go` 1.13.x). Use `/opt/homebrew/bin/go` path or ensure Homebrew Go is first in `PATH`.
