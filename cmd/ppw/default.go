@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -30,7 +31,9 @@ func runDefault() error {
 	}
 
 	// Build optional dependencies from config + env
-	opts := buildAppOptions(cfg)
+	eventCh := make(chan tea.Msg, 256)
+	logWriter := tui.NewEventLogWriter(eventCh)
+	opts := buildAppOptions(cfg, eventCh, logWriter)
 
 	model := tui.NewApp(cfg, cfgErrStr, opts)
 	p := tea.NewProgram(model, tea.WithAltScreen())
@@ -49,22 +52,25 @@ func loadConfig() (*config.Config, error) {
 
 // buildAppOptions creates optional background dependencies from config and env vars.
 // Missing credentials are not fatal — features are simply disabled.
-func buildAppOptions(cfg *config.Config) tui.AppOptions {
+func buildAppOptions(cfg *config.Config, eventCh chan tea.Msg, logOutput io.Writer) tui.AppOptions {
 	var opts tui.AppOptions
 
 	if cfg == nil {
 		return opts
 	}
+	opts.EventCh = eventCh
+	opts.LogOutput = logOutput
 
 	// Pipeline (needs AI provider)
 	cliPath := os.Getenv("CLAUDE_CLI_PATH")
 	provider := ai.NewClaudeCLI(cliPath)
 	opts.Pipeline = pipeline.New(provider, pipeline.Options{
 		CorpusPath: cfg.AI.CorpusPath,
+		LogOutput:  logOutput,
 	})
 
 	// Publisher (needs R2 + Instagram credentials)
-	pub := buildPublisher(cfg)
+	pub := buildPublisher(cfg, logOutput)
 	if pub != nil {
 		opts.Publisher = pub
 	}
@@ -74,6 +80,7 @@ func buildAppOptions(cfg *config.Config) tui.AppOptions {
 		arch, err := archiver.New(archiver.Options{
 			ArchiveDir: cfg.Archive.Dir,
 			LogFile:    cfg.Archive.LogFile,
+			LogOutput:  logOutput,
 		})
 		if err == nil {
 			opts.Archiver = arch
@@ -89,7 +96,7 @@ func buildAppOptions(cfg *config.Config) tui.AppOptions {
 // Auth modes:
 //   - Managed mode: run `ppw auth login` once, then publish uses store-backed tokens.
 //   - Fallback mode: static INSTAGRAM_ACCESS_TOKEN from environment (legacy).
-func buildPublisher(cfg *config.Config) *publisher.Publisher {
+func buildPublisher(cfg *config.Config, logOutput io.Writer) *publisher.Publisher {
 	r2Cfg, err := hosting.R2ConfigFromEnv()
 	if err != nil {
 		return nil // R2 not configured — publishing disabled
@@ -119,6 +126,7 @@ func buildPublisher(cfg *config.Config) *publisher.Publisher {
 		opts = publisher.Options{}
 	}
 
+	opts.LogOutput = logOutput
 	return publisher.New(r2, igClient, opts)
 }
 

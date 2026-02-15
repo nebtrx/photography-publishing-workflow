@@ -30,3 +30,8 @@ type RefreshMsg struct{}
 type StatusMsg struct {
 	Text string
 }
+
+// AppLogMsg appends a runtime log line to the in-app log panel.
+type AppLogMsg struct {
+	Line string
+}

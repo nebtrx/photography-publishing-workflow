@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -69,6 +70,8 @@ type AppOptions struct {
 	Pipeline  *pipeline.Pipeline
 	Publisher *publisher.Publisher
 	Archiver  *archiver.Archiver
+	EventCh   chan tea.Msg
+	LogOutput io.Writer
 }
 
 // AppModel is the unified TUI model.
@@ -105,11 +108,15 @@ type AppModel struct {
 	pipe *pipeline.Pipeline
 	pub  *publisher.Publisher
 	arch *archiver.Archiver
+	logW io.Writer
 
 	// Background state
-	watcherCh  chan tea.Msg // channel for watcher events; nil if watcher not started
-	publishing string      // post ID currently being published, or ""
-	pipelining string      // post ID currently in pipeline, or ""
+	watcherCh  chan tea.Msg // shared channel for watcher + runtime log messages
+	publishing string       // post ID currently being published, or ""
+	pipelining string       // post ID currently in pipeline, or ""
+
+	// In-app runtime logs
+	runtimeLogs []string
 }
 
 // NewApp creates the unified TUI model.
@@ -132,10 +139,12 @@ func NewApp(cfg *config.Config, cfgErr string, opts AppOptions) AppModel {
 		pipe:        opts.Pipeline,
 		pub:         opts.Publisher,
 		arch:        opts.Archiver,
+		logW:        opts.LogOutput,
+		watcherCh:   opts.EventCh,
 	}
 
-	// Set up watcher channel if pipeline and watch dir are available
-	if m.pipe != nil && watchDir != "" {
+	// Set up event channel if watcher can run and caller didn't provide one.
+	if m.watcherCh == nil && m.pipe != nil && watchDir != "" {
 		m.watcherCh = make(chan tea.Msg, 16)
 	}
 
@@ -149,7 +158,7 @@ func (m AppModel) Init() tea.Cmd {
 
 	// Start background watcher if pipeline + watch dir are configured
 	if m.watcherCh != nil && m.pipe != nil && m.watcherDir != "" {
-		startWatcherGoroutine(m.watcherDir, m.pipe, m.watcherCh)
+		startWatcherGoroutine(m.watcherDir, m.pipe, m.watcherCh, m.logW)
 		cmds = append(cmds, waitForWatcher(m.watcherCh))
 	}
 
@@ -205,6 +214,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case StatusMsg:
 		m.statusMsg = msg.Text
 		// Re-subscribe to watcher channel (StatusMsg comes from watcher)
+		return m, waitForWatcher(m.watcherCh)
+
+	case AppLogMsg:
+		m.appendRuntimeLog(msg.Line)
 		return m, waitForWatcher(m.watcherCh)
 
 	case tea.KeyMsg:
@@ -698,41 +711,49 @@ func (m AppModel) View() string {
 	// Layout
 	leftW := w*35/100 - 2
 	rightW := w - leftW - 6 // account for borders and gap
+	bodyH := h - 1
+
+	// Keep panel heights fixed so screen geometry does not shift while data changes.
+	configH := 6
+	remaining := bodyH - configH
+	if remaining < 12 {
+		remaining = 12
+		configH = bodyH - remaining
+	}
+	pendingH := remaining / 3
+	queueH := remaining / 3
+	publishedH := remaining - pendingH - queueH
 
 	// Render left panels
-	configPanel := m.renderConfigPanel(leftW)
-	pendingPanel := m.renderPendingPanel(leftW)
-	queuePanel := m.renderQueuePanel(leftW)
-	publishedPanel := m.renderPublishedPanel(leftW)
+	configPanel := m.renderConfigPanel(leftW, configH)
+	pendingPanel := m.renderPendingPanel(leftW, pendingH)
+	queuePanel := m.renderQueuePanel(leftW, queueH)
+	publishedPanel := m.renderPublishedPanel(leftW, publishedH)
 
-	// Render right detail panel
-	detailPanel := m.renderDetailPanel(rightW, h-4)
+	leftCol := lipgloss.JoinVertical(lipgloss.Left, configPanel, pendingPanel, queuePanel, publishedPanel)
 
-	// Compose left column
-	leftCol := lipgloss.JoinVertical(lipgloss.Left,
-		configPanel,
-		pendingPanel,
-		queuePanel,
-		publishedPanel,
-	)
+	// Split right column into detail (top) + runtime log (bottom).
+	logH := clampInt(bodyH*28/100, 7, 14)
+	if logH > bodyH-8 {
+		logH = bodyH - 8
+	}
+	detailH := bodyH - logH
+	detailPanel := m.renderDetailPanel(rightW, detailH)
+	logPanel := m.renderRuntimeLogPanel(rightW, logH)
+	rightCol := lipgloss.JoinVertical(lipgloss.Left, detailPanel, logPanel)
 
-	// Compose body
-	body := lipgloss.JoinHorizontal(lipgloss.Top, leftCol, " ", detailPanel)
+	body := lipgloss.JoinHorizontal(lipgloss.Top, leftCol, " ", rightCol)
 
-	// Status bar
-	statusBar := m.renderStatusBar(w)
-
-	result := lipgloss.JoinVertical(lipgloss.Left, body, statusBar)
-
-	// Render overlay on top if active
+	// Modal overlays render as a dedicated centered frame to avoid base-buffer corruption.
 	if m.overlay != OverlayNone {
-		result = m.renderOverlay(result, w, h)
+		body = m.renderOverlayFrame(w, bodyH)
 	}
 
-	return result
+	statusBar := m.renderStatusBar(w)
+	return lipgloss.JoinVertical(lipgloss.Left, body, statusBar)
 }
 
-func (m AppModel) renderConfigPanel(w int) string {
+func (m AppModel) renderConfigPanel(w, h int) string {
 	var lines []string
 	if m.cfg != nil {
 		lines = append(lines, fmt.Sprintf("Watch:   %s", truncate(m.cfg.Watch.Dir, w-12)))
@@ -748,13 +769,14 @@ func (m AppModel) renderConfigPanel(w int) string {
 		lines = append(lines, dimTextStyle.Render("No config loaded"))
 	}
 
+	lines = tailLines(lines, maxInt(1, h-3))
 	content := strings.Join(lines, "\n")
 	title := m.panelTitle("Config", PanelConfig)
 	border := m.borderForPanel(PanelConfig)
-	return border.Width(w).Render(title + "\n" + content)
+	return renderSizedPanel(border, w, h, title+"\n"+content)
 }
 
-func (m AppModel) renderPendingPanel(w int) string {
+func (m AppModel) renderPendingPanel(w, h int) string {
 	title := m.panelTitle(fmt.Sprintf("Pending Review (%d)", len(m.pendingPosts)), PanelPending)
 
 	var lines []string
@@ -771,12 +793,13 @@ func (m AppModel) renderPendingPanel(w int) string {
 		lines = append(lines, line)
 	}
 
+	lines = tailLines(lines, maxInt(1, h-3))
 	content := strings.Join(lines, "\n")
 	border := m.borderForPanel(PanelPending)
-	return border.Width(w).Render(title + "\n" + content)
+	return renderSizedPanel(border, w, h, title+"\n"+content)
 }
 
-func (m AppModel) renderQueuePanel(w int) string {
+func (m AppModel) renderQueuePanel(w, h int) string {
 	title := m.panelTitle(fmt.Sprintf("Publish Queue (%d)", len(m.queuePosts)), PanelQueue)
 
 	var lines []string
@@ -793,12 +816,13 @@ func (m AppModel) renderQueuePanel(w int) string {
 		lines = append(lines, line)
 	}
 
+	lines = tailLines(lines, maxInt(1, h-3))
 	content := strings.Join(lines, "\n")
 	border := m.borderForPanel(PanelQueue)
-	return border.Width(w).Render(title + "\n" + content)
+	return renderSizedPanel(border, w, h, title+"\n"+content)
 }
 
-func (m AppModel) renderPublishedPanel(w int) string {
+func (m AppModel) renderPublishedPanel(w, h int) string {
 	total := 0
 	for _, g := range m.logGroups {
 		total += len(g.Entries)
@@ -839,9 +863,10 @@ func (m AppModel) renderPublishedPanel(w int) string {
 		}
 	}
 
+	lines = tailLines(lines, maxInt(1, h-3))
 	content := strings.Join(lines, "\n")
 	border := m.borderForPanel(PanelPublished)
-	return border.Width(w).Render(title + "\n" + content)
+	return renderSizedPanel(border, w, h, title+"\n"+content)
 }
 
 func (m AppModel) renderDetailPanel(w, h int) string {
@@ -860,7 +885,7 @@ func (m AppModel) renderDetailPanel(w, h int) string {
 	}
 
 	border := activePanelBorder
-	return border.Width(w).Height(h).Render(title + "\n\n" + content)
+	return renderSizedPanel(border, w, h, title+"\n\n"+content)
 }
 
 func (m AppModel) renderConfigDetail(w int) string {
@@ -1060,7 +1085,23 @@ func (m AppModel) renderStatusBar(w int) string {
 	return statusBarBg.Width(w).Render(left + strings.Repeat(" ", gap) + right)
 }
 
-func (m AppModel) renderOverlay(base string, w, h int) string {
+func (m AppModel) renderRuntimeLogPanel(w, h int) string {
+	title := panelTitleDimStyle.Render("Runtime Log")
+
+	var lines []string
+	if len(m.runtimeLogs) == 0 {
+		lines = append(lines, dimTextStyle.Render("No runtime logs yet"))
+	} else {
+		for _, line := range tailLines(m.runtimeLogs, maxInt(1, h-3)) {
+			lines = append(lines, truncate(line, maxInt(8, w-5)))
+		}
+	}
+
+	content := strings.Join(lines, "\n")
+	return renderSizedPanel(panelBorder, w, h, title+"\n"+content)
+}
+
+func (m AppModel) renderOverlayFrame(w, h int) string {
 	var overlay string
 
 	switch m.overlay {
@@ -1075,10 +1116,9 @@ func (m AppModel) renderOverlay(base string, w, h int) string {
 	case OverlayHelp:
 		overlay = m.renderHelpOverlay()
 	default:
-		return base
+		return ""
 	}
-
-	return placeOverlay(base, overlay, w, h)
+	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, overlay)
 }
 
 func (m AppModel) renderEditorOverlay(w, h int) string {
@@ -1190,58 +1230,43 @@ func truncate(s string, max int) string {
 	return s
 }
 
-// placeOverlay centers an overlay string on top of a base string.
-func placeOverlay(base, overlay string, w, h int) string {
-	overlayLines := strings.Split(overlay, "\n")
-	baseLines := strings.Split(base, "\n")
-
-	// Pad base to h lines
-	for len(baseLines) < h {
-		baseLines = append(baseLines, "")
+func (m *AppModel) appendRuntimeLog(line string) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return
 	}
-
-	overlayH := len(overlayLines)
-	overlayW := 0
-	for _, line := range overlayLines {
-		if lipgloss.Width(line) > overlayW {
-			overlayW = lipgloss.Width(line)
-		}
+	m.runtimeLogs = append(m.runtimeLogs, line)
+	const maxRuntimeLogs = 500
+	if len(m.runtimeLogs) > maxRuntimeLogs {
+		m.runtimeLogs = m.runtimeLogs[len(m.runtimeLogs)-maxRuntimeLogs:]
 	}
+}
 
-	startY := (h - overlayH) / 2
-	startX := (w - overlayW) / 2
-	if startY < 0 {
-		startY = 0
+func tailLines(lines []string, max int) []string {
+	if max <= 0 || len(lines) <= max {
+		return lines
 	}
-	if startX < 0 {
-		startX = 0
+	return lines[len(lines)-max:]
+}
+
+func clampInt(v, min, max int) int {
+	if v < min {
+		return min
 	}
-
-	for i, overlayLine := range overlayLines {
-		y := startY + i
-		if y >= len(baseLines) {
-			break
-		}
-
-		baseLine := baseLines[y]
-		// Pad base line to width
-		for lipgloss.Width(baseLine) < startX {
-			baseLine += " "
-		}
-
-		// Replace portion with overlay
-		before := ""
-		if startX > 0 && lipgloss.Width(baseLine) >= startX {
-			// Take first startX chars (approximate)
-			runes := []rune(baseLine)
-			if startX < len(runes) {
-				before = string(runes[:startX])
-			} else {
-				before = baseLine
-			}
-		}
-		baseLines[y] = before + overlayLine
+	if v > max {
+		return max
 	}
+	return v
+}
 
-	return strings.Join(baseLines, "\n")
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func renderSizedPanel(style lipgloss.Style, w, h int, content string) string {
+	innerH := maxInt(1, h-2) // account for top+bottom border
+	return style.Width(w).Height(innerH).Render(content)
 }

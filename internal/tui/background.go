@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"io"
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,7 +16,7 @@ import (
 
 // startWatcherGoroutine starts the fsnotify watcher in a background goroutine.
 // New post directories trigger the pipeline, and results are sent to ch.
-func startWatcherGoroutine(dir string, p *pipeline.Pipeline, ch chan<- tea.Msg) {
+func startWatcherGoroutine(dir string, p *pipeline.Pipeline, ch chan<- tea.Msg, logOutput io.Writer) {
 	handler := func(ctx context.Context, postDir string) {
 		postName := filepath.Base(postDir)
 		ch <- StatusMsg{Text: "Processing: " + postName + "..."}
@@ -29,7 +30,7 @@ func startWatcherGoroutine(dir string, p *pipeline.Pipeline, ch chan<- tea.Msg) 
 	}
 
 	go func() {
-		w, err := watcher.New(dir, handler, watcher.Options{})
+		w, err := watcher.New(dir, handler, watcher.Options{LogOutput: logOutput})
 		if err != nil {
 			ch <- StatusMsg{Text: "Watcher error: " + err.Error()}
 			return

@@ -258,6 +258,41 @@ Short, factual entries for Future Omar.
 - `/opt/homebrew/bin/go test ./...` passed
 - `/opt/homebrew/bin/go run ./cmd/ppw --help` shows new `auth` command tree
 
+## 2026-02-15 — TUI render stability + integrated runtime log panel (execution)
+**Context:** Unified TUI deformed during modal editing and while watcher/pipeline/publish/archive logs printed to stderr in alt-screen mode.
+
+**Implemented:**
+- Right-column split in `internal/tui/app.go`:
+  - top detail panel
+  - bottom `Runtime Log` panel (~28% target with small-terminal clamps)
+- Stable fixed-height layout in `internal/tui/app.go`:
+  - explicit left-panel height allocation (config/pending/queue/published)
+  - explicit right-panel height allocation (detail/log)
+  - tail-trimming for long panel lists to avoid overflow bleed
+- Overlay stability change in `internal/tui/app.go`:
+  - removed manual buffer-rewrite compositor (`placeOverlay`)
+  - modal overlays now render in dedicated centered frame (`lipgloss.Place`)
+- TUI-safe log transport:
+  - added `AppLogMsg` in `internal/tui/messages.go`
+  - added line-buffered event writer `internal/tui/logsink.go`
+  - `AppModel` now stores bounded runtime log buffer (last 500 lines)
+- Logger routing to TUI channel:
+  - `cmd/ppw/default.go` now creates shared event channel + `NewEventLogWriter`
+  - `internal/archiver/archiver.go` `Options.LogOutput`
+  - `internal/pipeline/pipeline.go` `Options.LogOutput`
+  - `internal/watcher/watcher.go` `Options.LogOutput`
+  - `internal/publisher/publisher.go` `Options.LogOutput`
+  - `internal/tui/background.go` passes watcher log writer
+
+**Validation:**
+- `gofmt -w` on changed Go files
+- `/opt/homebrew/bin/go mod tidy`
+- `/opt/homebrew/bin/go test ./...` passed
+
+**Notes:**
+- Legacy CLI commands (non-TUI) still default to stderr logging.
+- TUI path now captures watcher/pipeline/publish/archive runtime logs in-panel instead of writing to terminal.
+
 ## 2026-02-15 — OAuth secure-redirect compatibility fix (localhost vs 127.0.0.1)
 **Context:** `ppw auth login` hit Meta login blocker: “isn't using a secure connection.” The auth flow used loopback IP redirect URIs.
 
@@ -294,6 +329,49 @@ Short, factual entries for Future Omar.
 - Kept backward compatibility:
   - if overrides are unset, Threads continues to use `META_APP_ID/META_APP_SECRET`.
 - Updated docs:
+
+## 2026-02-15 — TUI border alignment follow-up (detail top edge + log panel bottom fill)
+**Context:** After initial TUI stabilization pass, panel geometry still showed visible border defects:
+- detail panel top edge missing in some terminal sizes
+- runtime log panel not reaching the status bar
+
+**Root cause:**
+- `lipgloss.Style.Height(...)` was treated like final rendered block height.
+- With bordered styles, height applies to inner content; borders add extra rows, causing panel over/under-sizing and clipping artifacts.
+
+**Fix implemented:**
+- Updated panel rendering in `internal/tui/app.go` to:
+  - render bordered panels without style height forcing
+  - enforce exact final block size via `lipgloss.Place(width, height, ...)`
+  - keep per-panel line budgets via `tailLines(..., h-3)` before render
+- Applied to:
+  - `renderConfigPanel`
+  - `renderPendingPanel`
+  - `renderQueuePanel`
+  - `renderPublishedPanel`
+  - `renderDetailPanel`
+  - `renderRuntimeLogPanel`
+
+**Validation:**
+- `/opt/homebrew/bin/go test ./...` passed
+
+## 2026-02-15 — TUI full-height panel regression fix (slim panels)
+**Context:** Follow-up patch for border alignment caused panels to render as slim boxes with large blank gaps.
+
+**Root cause:**
+- Replacing bordered panel blocks with `lipgloss.Place` preserved outer layout height but did not force borders to consume that height.
+
+**Fix implemented:**
+- Added `renderSizedPanel(...)` helper in `internal/tui/app.go`:
+  - computes inner content height as `h - 2` (top/bottom border rows)
+  - renders bordered panel at exact assigned height
+- Applied helper to all fixed panels:
+  - config/pending/queue/published
+  - detail
+  - runtime log
+
+**Validation:**
+- `/opt/homebrew/bin/go test ./...` passed
   - `.env.sample`
   - `README.md`
 
@@ -401,3 +479,19 @@ Store value indicated `meta.user_expires_at` was written near current time.
 
 **Validation:**
 - `/opt/homebrew/bin/go test ./...` passed
+
+## 2026-02-15 — New directive/orchestration for TUI deformation and log-panel redesign
+**Context:** User reported recurring TUI deformation during overlay typing and background log output. Screenshots show border corruption and line bleed while watcher/pipeline/publish logs are emitted.
+
+**Artifacts added (DOE order):**
+- Directive:
+  - `directives/tui_render_stability_and_log_panel.md`
+- Orchestration:
+  - `directives/orchestration_tui_render_stability_and_log_panel.md`
+
+**Planned UX direction captured:**
+- Split right column into:
+  - top detail panel
+  - bottom log panel (~25%-30% height)
+- Route runtime logs through TUI-safe message pipeline (no raw stdout/stderr writes in active TUI mode).
+- Harden geometry clamps and line wrapping to prevent layout corruption.

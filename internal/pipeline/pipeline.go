@@ -5,6 +5,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 
@@ -21,6 +22,7 @@ type Options struct {
 	SkipLocation bool
 	SkipMusic    bool
 	DryRun       bool
+	LogOutput    io.Writer
 }
 
 // Pipeline chains scan → validate → enrich for a post directory.
@@ -32,10 +34,15 @@ type Pipeline struct {
 
 // New creates a Pipeline.
 func New(provider ai.Provider, opts Options) *Pipeline {
+	logOutput := opts.LogOutput
+	if logOutput == nil {
+		logOutput = os.Stderr
+	}
+
 	return &Pipeline{
 		provider: provider,
 		opts:     opts,
-		logger:   log.New(os.Stderr, "[pipeline] ", log.LstdFlags),
+		logger:   log.New(logOutput, "[pipeline] ", log.LstdFlags),
 	}
 }
 

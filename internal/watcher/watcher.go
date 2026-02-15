@@ -5,6 +5,7 @@ package watcher
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -22,18 +23,19 @@ type Handler func(ctx context.Context, dir string)
 
 // Watcher monitors a directory for new subdirectories.
 type Watcher struct {
-	dir        string
-	handler    Handler
-	debounce   time.Duration
-	logger     *log.Logger
-	seen       map[string]bool
-	mu         sync.Mutex
-	fsWatcher  *fsnotify.Watcher
+	dir       string
+	handler   Handler
+	debounce  time.Duration
+	logger    *log.Logger
+	seen      map[string]bool
+	mu        sync.Mutex
+	fsWatcher *fsnotify.Watcher
 }
 
 // Options configures the watcher.
 type Options struct {
-	Debounce time.Duration // wait before triggering handler (default 2s)
+	Debounce  time.Duration // wait before triggering handler (default 2s)
+	LogOutput io.Writer
 }
 
 // New creates a Watcher.
@@ -52,11 +54,16 @@ func New(dir string, handler Handler, opts Options) (*Watcher, error) {
 		return nil, fmt.Errorf("create fsnotify watcher: %w", err)
 	}
 
+	logOutput := opts.LogOutput
+	if logOutput == nil {
+		logOutput = os.Stderr
+	}
+
 	return &Watcher{
 		dir:       dir,
 		handler:   handler,
 		debounce:  debounce,
-		logger:    log.New(os.Stderr, "[watcher] ", log.LstdFlags),
+		logger:    log.New(logOutput, "[watcher] ", log.LstdFlags),
 		seen:      make(map[string]bool),
 		fsWatcher: fsw,
 	}, nil

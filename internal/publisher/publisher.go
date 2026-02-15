@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -55,14 +56,20 @@ type Options struct {
 	StrictSyndication bool
 	Facebook          FacebookSyndicator
 	Threads           ThreadsSyndicator
+	LogOutput         io.Writer
 }
 
 // New creates a new Publisher.
 func New(host hosting.Host, ig InstagramAPI, opts Options) *Publisher {
+	logOutput := opts.LogOutput
+	if logOutput == nil {
+		logOutput = os.Stderr
+	}
+
 	return &Publisher{
 		host:              host,
 		ig:                ig,
-		logger:            log.New(os.Stderr, "[publish] ", log.LstdFlags),
+		logger:            log.New(logOutput, "[publish] ", log.LstdFlags),
 		dryRun:            opts.DryRun,
 		enableFacebook:    opts.EnableFacebook,
 		enableThreads:     opts.EnableThreads,

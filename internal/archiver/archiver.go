@@ -27,6 +27,7 @@ type Options struct {
 	ArchiveDir string // root archive directory
 	LogFile    string // path to JSONL publish log
 	DryRun     bool
+	LogOutput  io.Writer
 }
 
 // LogEntry represents one line in the publish log (JSONL).
@@ -50,10 +51,15 @@ func New(opts Options) (*Archiver, error) {
 	if opts.LogFile == "" {
 		return nil, fmt.Errorf("log file path is required")
 	}
+	logOutput := opts.LogOutput
+	if logOutput == nil {
+		logOutput = os.Stderr
+	}
+
 	return &Archiver{
 		archiveDir: opts.ArchiveDir,
 		logFile:    opts.LogFile,
-		logger:     log.New(os.Stderr, "[archive] ", log.LstdFlags),
+		logger:     log.New(logOutput, "[archive] ", log.LstdFlags),
 		dryRun:     opts.DryRun,
 	}, nil
 }
