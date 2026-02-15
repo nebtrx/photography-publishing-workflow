@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,13 +24,14 @@ type Handler func(ctx context.Context, dir string)
 
 // Watcher monitors a directory for new subdirectories.
 type Watcher struct {
-	dir       string
-	handler   Handler
-	debounce  time.Duration
-	logger    *log.Logger
-	seen      map[string]bool
-	mu        sync.Mutex
-	fsWatcher *fsnotify.Watcher
+	dir        string
+	handler    Handler
+	debounce   time.Duration
+	logger     *log.Logger
+	seen       map[string]bool
+	watchedDir map[string]bool
+	mu         sync.Mutex
+	fsWatcher  *fsnotify.Watcher
 }
 
 // Options configures the watcher.
@@ -60,24 +62,25 @@ func New(dir string, handler Handler, opts Options) (*Watcher, error) {
 	}
 
 	return &Watcher{
-		dir:       dir,
-		handler:   handler,
-		debounce:  debounce,
-		logger:    log.New(logOutput, "[watcher] ", log.LstdFlags),
-		seen:      make(map[string]bool),
-		fsWatcher: fsw,
+		dir:        dir,
+		handler:    handler,
+		debounce:   debounce,
+		logger:     log.New(logOutput, "[watcher] ", log.LstdFlags),
+		seen:       make(map[string]bool),
+		watchedDir: make(map[string]bool),
+		fsWatcher:  fsw,
 	}, nil
 }
 
 // Watch starts watching the directory. Blocks until ctx is cancelled.
 func (w *Watcher) Watch(ctx context.Context) error {
-	// Scan existing directories first
-	w.scanExisting()
-
-	if err := w.fsWatcher.Add(w.dir); err != nil {
-		return fmt.Errorf("watch %s: %w", w.dir, err)
+	if err := w.addWatch(w.dir); err != nil {
+		return err
 	}
 	defer w.fsWatcher.Close()
+
+	// Scan existing directories after root watch is active.
+	w.scanExisting()
 
 	w.logger.Printf("Watching %s for new post directories...", w.dir)
 
@@ -96,37 +99,31 @@ func (w *Watcher) Watch(ctx context.Context) error {
 				return nil
 			}
 
-			// Only care about creates in the watch directory
-			if !event.Has(fsnotify.Create) {
-				continue
+			// New post directory creation in watch root.
+			if event.Has(fsnotify.Create) {
+				if info, err := os.Stat(event.Name); err == nil && info.IsDir() && filepath.Dir(event.Name) == w.dir {
+					if err := w.addWatch(event.Name); err != nil {
+						w.logger.Printf("Warning: failed to watch %s: %v", event.Name, err)
+					}
+					w.scheduleProcess(ctx, timers, &timersMu, event.Name, false, "new directory created")
+					continue
+				}
 			}
 
-			// Check if it's a directory
-			info, err := os.Stat(event.Name)
-			if err != nil || !info.IsDir() {
+			// Existing errored posts auto-retry when image files change.
+			postDir := w.postDirForEvent(event.Name)
+			if postDir == "" {
 				continue
 			}
-
-			dir := event.Name
-			w.mu.Lock()
-			alreadySeen := w.seen[dir]
-			w.mu.Unlock()
-			if alreadySeen {
+			if !w.isImageChangeEvent(event) {
 				continue
 			}
-
-			// Debounce: wait for files to settle (Lightroom may still be writing)
-			timersMu.Lock()
-			if t, exists := timers[dir]; exists {
-				t.Stop()
+			errored, reason := w.isErroredPost(postDir)
+			if !errored {
+				continue
 			}
-			timers[dir] = time.AfterFunc(w.debounce, func() {
-				w.handleNew(ctx, dir)
-				timersMu.Lock()
-				delete(timers, dir)
-				timersMu.Unlock()
-			})
-			timersMu.Unlock()
+			msg := fmt.Sprintf("image change detected (%s) after error: %s", event.Op.String(), reason)
+			w.scheduleProcess(ctx, timers, &timersMu, postDir, true, msg)
 
 		case err, ok := <-w.fsWatcher.Errors:
 			if !ok {
@@ -152,6 +149,9 @@ func (w *Watcher) scanExisting() {
 			continue
 		}
 		dir := filepath.Join(w.dir, e.Name())
+		if err := w.addWatch(dir); err != nil {
+			w.logger.Printf("Warning: failed to watch existing dir %s: %v", e.Name(), err)
+		}
 		mPath := manifest.ManifestPath(dir)
 
 		if _, err := os.Stat(mPath); err == nil {
@@ -161,17 +161,42 @@ func (w *Watcher) scanExisting() {
 				w.mu.Lock()
 				w.seen[dir] = true
 				w.mu.Unlock()
-				w.logger.Printf("Existing: %s (state: %s)", e.Name(), m.State)
+				if m.State == manifest.StateError {
+					w.logger.Printf("Existing: %s (state: %s, reason: %s)", e.Name(), m.State, manifestErrorReason(m))
+				} else {
+					w.logger.Printf("Existing: %s (state: %s)", e.Name(), m.State)
+				}
 			}
 		}
 		// No manifest = new directory, don't mark as seen so it gets picked up
 	}
 }
 
-// handleNew processes a newly detected directory.
-func (w *Watcher) handleNew(ctx context.Context, dir string) {
+func (w *Watcher) scheduleProcess(
+	ctx context.Context,
+	timers map[string]*time.Timer,
+	timersMu *sync.Mutex,
+	dir string,
+	force bool,
+	reason string,
+) {
+	timersMu.Lock()
+	if t, exists := timers[dir]; exists {
+		t.Stop()
+	}
+	timers[dir] = time.AfterFunc(w.debounce, func() {
+		w.handleProcess(ctx, dir, force, reason)
+		timersMu.Lock()
+		delete(timers, dir)
+		timersMu.Unlock()
+	})
+	timersMu.Unlock()
+}
+
+// handleProcess processes a directory, optionally forcing retries for errored posts.
+func (w *Watcher) handleProcess(ctx context.Context, dir string, force bool, reason string) {
 	w.mu.Lock()
-	if w.seen[dir] {
+	if w.seen[dir] && !force {
 		w.mu.Unlock()
 		return
 	}
@@ -195,8 +220,77 @@ func (w *Watcher) handleNew(ctx context.Context, dir string) {
 		return
 	}
 
-	w.logger.Printf("New post detected: %s", filepath.Base(dir))
+	if force {
+		w.logger.Printf("Retrying errored post: %s (%s)", filepath.Base(dir), reason)
+	} else {
+		w.logger.Printf("New post detected: %s", filepath.Base(dir))
+	}
 	w.handler(ctx, dir)
+}
+
+func (w *Watcher) addWatch(dir string) error {
+	w.mu.Lock()
+	if w.watchedDir[dir] {
+		w.mu.Unlock()
+		return nil
+	}
+	w.watchedDir[dir] = true
+	w.mu.Unlock()
+
+	if err := w.fsWatcher.Add(dir); err != nil {
+		w.mu.Lock()
+		delete(w.watchedDir, dir)
+		w.mu.Unlock()
+		return fmt.Errorf("watch %s: %w", dir, err)
+	}
+	return nil
+}
+
+// postDirForEvent resolves the top-level post directory for a fsnotify event path.
+func (w *Watcher) postDirForEvent(path string) string {
+	rel, err := filepath.Rel(w.dir, path)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return ""
+	}
+	parts := strings.Split(rel, string(os.PathSeparator))
+	if len(parts) == 0 || parts[0] == "" {
+		return ""
+	}
+	return filepath.Join(w.dir, parts[0])
+}
+
+func (w *Watcher) isImageChangeEvent(event fsnotify.Event) bool {
+	if !(event.Has(fsnotify.Create) || event.Has(fsnotify.Write) || event.Has(fsnotify.Rename) || event.Has(fsnotify.Remove)) {
+		return false
+	}
+	ext := strings.ToLower(filepath.Ext(event.Name))
+	return ext == ".jpg" || ext == ".jpeg"
+}
+
+func (w *Watcher) isErroredPost(dir string) (bool, string) {
+	mPath := manifest.ManifestPath(dir)
+	m, err := manifest.Read(mPath)
+	if err != nil {
+		return false, ""
+	}
+	if m.State != manifest.StateError {
+		return false, ""
+	}
+	return true, manifestErrorReason(m)
+}
+
+func manifestErrorReason(m *manifest.Manifest) string {
+	if len(m.Errors) > 0 {
+		return strings.TrimSpace(m.Errors[len(m.Errors)-1])
+	}
+	if m.Validation != nil {
+		for _, issue := range m.Validation.Issues {
+			if strings.EqualFold(issue.Severity, "error") && strings.TrimSpace(issue.Message) != "" {
+				return strings.TrimSpace(issue.Message)
+			}
+		}
+	}
+	return "unknown manifest error"
 }
 
 // Close stops the watcher.

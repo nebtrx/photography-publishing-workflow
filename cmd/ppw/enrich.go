@@ -3,12 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"photography-publishing-workflow/internal/ai"
 	"photography-publishing-workflow/internal/enricher"
 	"photography-publishing-workflow/internal/manifest"
 )
@@ -26,7 +24,7 @@ func enrichCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "enrich",
 		Short: "AI-enrich a validated manifest with caption, location, and music",
-		Long:  "Generates caption (with inline hashtags), identifies location, and suggests music using AI. Requires claude CLI on PATH.",
+		Long:  "Generates caption (with inline hashtags), identifies location, and suggests music using AI.\nSet PPW_AI_PROVIDER=codex to use OpenAI Codex CLI instead of Claude CLI (default).",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if manifestPath == "" {
 				return fmt.Errorf("--manifest is required")
@@ -56,8 +54,7 @@ func enrichCmd() *cobra.Command {
 			}
 
 			// Set up AI provider
-			cliPath := os.Getenv("CLAUDE_CLI_PATH")
-			provider := ai.NewClaudeCLI(cliPath)
+			provider := buildAIProvider()
 
 			e := enricher.New(provider, enricher.Options{
 				SkipLocation: skipLocation,

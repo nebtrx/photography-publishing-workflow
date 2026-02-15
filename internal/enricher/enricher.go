@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -20,17 +22,27 @@ type Options struct {
 	SkipLocation bool
 	SkipMusic    bool
 	CorpusPath   string
+	LogOutput    io.Writer
 }
 
 // Enricher orchestrates AI enrichment of a manifest.
 type Enricher struct {
 	provider ai.Provider
 	opts     Options
+	logger   *log.Logger
 }
 
 // New creates an Enricher with the given AI provider and options.
 func New(provider ai.Provider, opts Options) *Enricher {
-	return &Enricher{provider: provider, opts: opts}
+	logOutput := opts.LogOutput
+	if logOutput == nil {
+		logOutput = os.Stderr
+	}
+	return &Enricher{
+		provider: provider,
+		opts:     opts,
+		logger:   log.New(logOutput, "", log.LstdFlags),
+	}
 }
 
 // Enrich runs all enrichment components on a validated manifest.
@@ -50,7 +62,7 @@ func (e *Enricher) Enrich(ctx context.Context, m *manifest.Manifest) error {
 	// 1. Caption generation (always runs)
 	caption, err := e.generateCaption(ctx, m, hero)
 	if err != nil {
-		log.Printf("WARN: caption generation failed: %v", err)
+		e.logger.Printf("WARN: caption generation failed: %v", err)
 	} else {
 		enrichment.Caption = caption
 	}
@@ -59,7 +71,7 @@ func (e *Enricher) Enrich(ctx context.Context, m *manifest.Manifest) error {
 	if !e.opts.SkipLocation {
 		loc, err := e.identifyLocation(ctx, m, hero)
 		if err != nil {
-			log.Printf("WARN: location identification failed: %v", err)
+			e.logger.Printf("WARN: location identification failed: %v", err)
 		} else {
 			enrichment.Location = loc
 		}
@@ -69,7 +81,7 @@ func (e *Enricher) Enrich(ctx context.Context, m *manifest.Manifest) error {
 	if !e.opts.SkipMusic {
 		music, err := e.suggestMusic(ctx, m, hero, enrichment.Location)
 		if err != nil {
-			log.Printf("WARN: music suggestion failed: %v", err)
+			e.logger.Printf("WARN: music suggestion failed: %v", err)
 		} else {
 			enrichment.MusicSuggestion = music
 		}
@@ -96,7 +108,7 @@ func heroImage(m *manifest.Manifest) *manifest.Image {
 func (e *Enricher) generateCaption(ctx context.Context, m *manifest.Manifest, hero *manifest.Image) (*manifest.Caption, error) {
 	corpus, err := LoadCorpus(e.opts.CorpusPath)
 	if err != nil {
-		log.Printf("WARN: could not load style corpus: %v", err)
+		e.logger.Printf("WARN: could not load style corpus: %v", err)
 	}
 
 	systemPrompt := buildCaptionSystemPrompt(corpus)

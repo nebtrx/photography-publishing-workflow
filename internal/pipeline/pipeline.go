@@ -101,6 +101,7 @@ func (p *Pipeline) Run(ctx context.Context, dir string) *Result {
 		SkipLocation: p.opts.SkipLocation,
 		SkipMusic:    p.opts.SkipMusic,
 		CorpusPath:   p.opts.CorpusPath,
+		LogOutput:    p.opts.LogOutput,
 	})
 
 	p.logger.Printf("Enriching %s...", m.ID)

@@ -62,8 +62,7 @@ func buildAppOptions(cfg *config.Config, eventCh chan tea.Msg, logOutput io.Writ
 	opts.LogOutput = logOutput
 
 	// Pipeline (needs AI provider)
-	cliPath := os.Getenv("CLAUDE_CLI_PATH")
-	provider := ai.NewClaudeCLI(cliPath)
+	provider := buildAIProvider()
 	opts.Pipeline = pipeline.New(provider, pipeline.Options{
 		CorpusPath: cfg.AI.CorpusPath,
 		LogOutput:  logOutput,
@@ -128,6 +127,17 @@ func buildPublisher(cfg *config.Config, logOutput io.Writer) *publisher.Publishe
 
 	opts.LogOutput = logOutput
 	return publisher.New(r2, igClient, opts)
+}
+
+// buildAIProvider creates an AI provider based on PPW_AI_PROVIDER env var.
+// Supported values: "claude" (default), "codex".
+func buildAIProvider() ai.Provider {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("PPW_AI_PROVIDER"))) {
+	case "codex":
+		return ai.NewCodexCLI(os.Getenv("CODEX_CLI_PATH"), os.Getenv("CODEX_MODEL"))
+	default:
+		return ai.NewClaudeCLI(os.Getenv("CLAUDE_CLI_PATH"))
+	}
 }
 
 // buildInstagramClient creates an Instagram client, preferring auth-managed mode.

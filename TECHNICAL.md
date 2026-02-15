@@ -444,6 +444,51 @@ Short, factual entries for Future Omar.
 
 **Validation:**
 - `/opt/homebrew/bin/go test ./...` passed
+
+## 2026-02-15 — Watcher auto-retry for errored posts + clearer startup error logs
+**Context:** After moving/changing files inside a post already in `state:error`, watcher did not retry automatically and logs were too terse (`Existing: <post> (state: error)`).
+
+**Implemented:**
+- Updated `internal/watcher/watcher.go`:
+  - watcher now adds fsnotify watches for existing post subdirectories (not only root watch dir)
+  - added forced retry path for errored posts when JPEG files change (`create/write/rename/remove`)
+  - added per-directory debounced scheduler for both new-dir and retry triggers
+  - startup logs for errored manifests now include reason text:
+    - from `manifest.errors` (last entry) when present
+    - else from first validation issue with severity `error`
+- New helper behavior:
+  - `isErroredPost(...)` gates forced retries to `state:error` only
+  - `manifestErrorReason(...)` extracts actionable reason text
+
+**Tests:**
+- Added `TestWatcher_RetriesErroredPostOnImageChange` in `internal/watcher/watcher_test.go`.
+
+**Artifacts added:**
+- `directives/error_state_auto_retry_and_watcher_error_logging.md`
+- `directives/orchestration_error_state_auto_retry_and_watcher_error_logging.md`
+
+**Validation:**
+- `/opt/homebrew/bin/go test ./internal/watcher ./cmd/ppw ./internal/tui` passed
+- `/opt/homebrew/bin/go test ./...` passed
+
+## 2026-02-15 — TUI stability follow-up: route enricher warnings into in-app runtime log
+**Context:** Even after watcher/pipeline/publisher log routing, UI could still shift upward when enrichment warnings occurred (`caption/location/music` failures). Those warnings were printed by global `log.Printf` in `internal/enricher`, bypassing TUI log sink.
+
+**Fix implemented:**
+- Updated `internal/enricher/enricher.go`:
+  - added `Options.LogOutput io.Writer`
+  - added per-instance logger in `Enricher`
+  - replaced global `log.Printf` calls with `e.logger.Printf(...)`
+- Updated `internal/pipeline/pipeline.go`:
+  - pass `LogOutput` through to `enricher.New(...)`
+
+**Impact:**
+- Enricher warnings now go through the same routed writer used by TUI runtime log panel.
+- No raw stderr warning lines should break alt-screen frame layout during file-change reprocessing.
+
+**Validation:**
+- `/opt/homebrew/bin/go test ./internal/enricher ./internal/pipeline ./internal/tui ./cmd/ppw` passed
+- `/opt/homebrew/bin/go test ./...` passed
   - `.env.sample`
   - `README.md`
 

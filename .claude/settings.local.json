@@ -7,7 +7,8 @@
       "Bash(.tmp/gen_mixed.go << 'GOEOF'\npackage main\n\nimport \\(\n\t\"fmt\"\n\t\"photography-publishing-workflow/internal/testutil\"\n\\)\n\nfunc main\\(\\) {\n\tif err := testutil.SetupMixedRatios\\(\".tmp/mixed-post\"\\); err != nil {\n\t\tfmt.Println\\(\"ERROR:\", err\\)\n\t\treturn\n\t}\n\tfmt.Println\\(\"Created mixed-ratio fixtures\"\\)\n}\nGOEOF)",
       "Bash(go run:*)",
       "Bash(# Generate fixture, scan, validate, then dry-run enrich\ncat > .tmp/gen_e2e.go << 'GOEOF'\npackage main\n\nimport \\(\n\t\"fmt\"\n\t\"photography-publishing-workflow/internal/testutil\"\n\\)\n\nfunc main\\(\\) {\n\tif err := testutil.SetupSamplePost\\(\".tmp/e2e-post\"\\); err != nil {\n\t\tfmt.Println\\(\"ERROR:\", err\\)\n\t\treturn\n\t}\n\tfmt.Println\\(\"ok\"\\)\n}\nGOEOF\ngo run .tmp/gen_e2e.go && ./bin/ppw scan --dir .tmp/e2e-post && ./bin/ppw validate --manifest .tmp/e2e-post/manifest.json && ./bin/ppw enrich --manifest .tmp/e2e-post/manifest.json --dry-run 2>&1)",
-      "Bash(go vet:*)"
+      "Bash(go vet:*)",
+      "WebFetch(domain:developers.openai.com)"
     ]
   }
 }

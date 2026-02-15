@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"photography-publishing-workflow/internal/manifest"
 	"photography-publishing-workflow/internal/testutil"
 )
 
@@ -146,5 +147,64 @@ func TestWatcher_InvalidDir(t *testing.T) {
 	_, err := New("/nonexistent/path", nil, Options{})
 	if err == nil {
 		t.Error("expected error for nonexistent directory")
+	}
+}
+
+func TestWatcher_RetriesErroredPostOnImageChange(t *testing.T) {
+	watchDir := t.TempDir()
+	postDir := filepath.Join(watchDir, "errored-post")
+	if err := os.Mkdir(postDir, 0o755); err != nil {
+		t.Fatalf("mkdir post dir: %v", err)
+	}
+	testutil.CreateJPEG(filepath.Join(postDir, "photo_1.jpg"), 1080, 1350)
+
+	m := manifest.New("errored-post", postDir)
+	m.State = manifest.StateError
+	m.Validation = &manifest.Validation{
+		Passed: false,
+		Issues: []manifest.ValidationIssue{
+			{Severity: "error", Message: "duplicate suffix _3"},
+		},
+	}
+	if err := m.Write(manifest.ManifestPath(postDir)); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	var mu sync.Mutex
+	var detected []string
+	handler := func(ctx context.Context, dir string) {
+		mu.Lock()
+		detected = append(detected, dir)
+		mu.Unlock()
+	}
+
+	w, err := New(watchDir, handler, Options{Debounce: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- w.Watch(ctx)
+	}()
+	time.Sleep(250 * time.Millisecond)
+
+	// Trigger retry by changing image files in the errored post directory.
+	testutil.CreateJPEG(filepath.Join(postDir, "photo_2.jpg"), 1080, 1350)
+	time.Sleep(600 * time.Millisecond)
+
+	cancel()
+	<-errCh
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(detected) != 1 {
+		t.Fatalf("detected = %d, want 1", len(detected))
+	}
+	if detected[0] != postDir {
+		t.Fatalf("detected dir = %q, want %q", detected[0], postDir)
 	}
 }
