@@ -41,18 +41,14 @@ type Session struct {
 	closed     bool
 }
 
-// ConfigFromEnv resolves runtime config with defaults.
-func ConfigFromEnv() Config {
-	cfg := Config{
-		LogDir:        strings.TrimSpace(os.Getenv("PPW_LOG_DIR")),
-		SuccessTTL:    parseDurationEnv("PPW_LOG_SUCCESS_TTL", defaultSuccessTTL),
-		FailedTTL:     parseDurationEnv("PPW_LOG_FAILED_TTL", defaultFailedTTL),
-		SweepInterval: parseDurationEnv("PPW_LOG_SWEEP_INTERVAL", defaultSweepInterval),
+// DefaultConfig returns default retention/log settings.
+func DefaultConfig() Config {
+	return Config{
+		LogDir:        defaultLogDir,
+		SuccessTTL:    defaultSuccessTTL,
+		FailedTTL:     defaultFailedTTL,
+		SweepInterval: defaultSweepInterval,
 	}
-	if cfg.LogDir == "" {
-		cfg.LogDir = defaultLogDir
-	}
-	return cfg
 }
 
 // NewSession creates a new per-job log file session.
@@ -264,18 +260,6 @@ func parseCompletedName(name string) (status string, completedAt time.Time, ok b
 		return "", time.Time{}, false
 	}
 	return status, time.Unix(unixSec, 0).UTC(), true
-}
-
-func parseDurationEnv(name string, fallback time.Duration) time.Duration {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return fallback
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil {
-		return fallback
-	}
-	return d
 }
 
 func expandHome(path string) (string, error) {

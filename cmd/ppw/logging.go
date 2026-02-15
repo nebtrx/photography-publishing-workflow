@@ -7,11 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"photography-publishing-workflow/internal/config"
 	"photography-publishing-workflow/internal/joblog"
 )
-
-const defaultRuntimeLogRelPath = ".ppw/ppw.log"
 
 // CommandLogSession fans logs into terminal/TUI, runtime stream file, and one job log file.
 type CommandLogSession struct {
@@ -23,8 +23,8 @@ type CommandLogSession struct {
 	jobSession  *joblog.Session
 }
 
-func openCommandLogSession(module string, base io.Writer) (*CommandLogSession, error) {
-	runtimePath, err := runtimeLogPath()
+func openCommandLogSession(module string, cfg *config.Config, base io.Writer) (*CommandLogSession, error) {
+	runtimePath, err := runtimeLogPath(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -43,8 +43,8 @@ func openCommandLogSession(module string, base io.Writer) (*CommandLogSession, e
 	}
 	runtimeWriter := io.MultiWriter(base, runtimeFile)
 
-	cfg := joblog.ConfigFromEnv()
-	jobSess, err := joblog.NewSession(cfg, module, "", runtimeWriter)
+	jobCfg := jobLogConfig(cfg)
+	jobSess, err := joblog.NewSession(jobCfg, module, "", runtimeWriter)
 	if err != nil {
 		_ = runtimeFile.Close()
 		return nil, err
@@ -79,19 +79,21 @@ func (s *CommandLogSession) Close(success bool) error {
 	return firstErr
 }
 
-func startPeriodicLogSweep(ctx context.Context, logOutput io.Writer) {
-	joblog.StartPeriodicSweep(ctx, joblog.ConfigFromEnv(), logOutput)
+func startPeriodicLogSweep(ctx context.Context, cfg *config.Config, logOutput io.Writer) {
+	joblog.StartPeriodicSweep(ctx, jobLogConfig(cfg), logOutput)
 }
 
-func sweepLogsNow(logOutput io.Writer) {
-	joblog.SweepNow(joblog.ConfigFromEnv(), logOutput)
+func sweepLogsNow(cfg *config.Config, logOutput io.Writer) {
+	joblog.SweepNow(jobLogConfig(cfg), logOutput)
 }
 
-func runtimeLogPath() (string, error) {
-	if raw := strings.TrimSpace(os.Getenv("PPW_LOG_FILE")); raw != "" {
-		return expandHome(raw)
+func runtimeLogPath(cfg *config.Config) (string, error) {
+	if cfg != nil {
+		if raw := strings.TrimSpace(cfg.Logging.RuntimeLogFile); raw != "" {
+			return expandHome(raw)
+		}
 	}
-	return expandHome("~/" + defaultRuntimeLogRelPath)
+	return expandHome("~/.ppw/ppw.log")
 }
 
 func expandHome(path string) (string, error) {
@@ -113,4 +115,35 @@ func writeLogLine(w io.Writer, format string, args ...any) {
 		w = os.Stderr
 	}
 	_, _ = fmt.Fprintf(w, format+"\n", args...)
+}
+
+func jobLogConfig(cfg *config.Config) joblog.Config {
+	out := joblog.DefaultConfig()
+	if cfg == nil {
+		return out
+	}
+	if strings.TrimSpace(cfg.Logging.JobLogDir) != "" {
+		out.LogDir = cfg.Logging.JobLogDir
+	}
+	if d, ok := parseDuration(strings.TrimSpace(cfg.Logging.SuccessTTL)); ok {
+		out.SuccessTTL = d
+	}
+	if d, ok := parseDuration(strings.TrimSpace(cfg.Logging.FailedTTL)); ok {
+		out.FailedTTL = d
+	}
+	if d, ok := parseDuration(strings.TrimSpace(cfg.Logging.SweepInterval)); ok {
+		out.SweepInterval = d
+	}
+	return out
+}
+
+func parseDuration(raw string) (time.Duration, bool) {
+	if raw == "" {
+		return 0, false
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, false
+	}
+	return d, true
 }

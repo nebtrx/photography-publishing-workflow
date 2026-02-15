@@ -24,10 +24,17 @@ func enrichCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "enrich",
 		Short: "AI-enrich a validated manifest with caption, location, and music",
-		Long:  "Generates caption (with inline hashtags), identifies location, and suggests music using AI.\nSet PPW_AI_PROVIDER=codex to use OpenAI Codex CLI instead of Claude CLI (default).",
+		Long:  "Generates caption (with inline hashtags), identifies location, and suggests music using AI.\nProvider is configured in ppw.toml under [ai].",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if manifestPath == "" {
 				return fmt.Errorf("--manifest is required")
+			}
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			if corpusPath == "" {
+				corpusPath = cfg.AI.CorpusPath
 			}
 
 			m, err := manifest.Read(manifestPath)
@@ -54,7 +61,7 @@ func enrichCmd() *cobra.Command {
 			}
 
 			// Set up AI provider
-			provider := buildAIProvider()
+			provider := buildAIProvider(cfg)
 
 			e := enricher.New(provider, enricher.Options{
 				SkipLocation: skipLocation,

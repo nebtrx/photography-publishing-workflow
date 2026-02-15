@@ -33,15 +33,22 @@ After running, the manifest will be in pending_review state, ready for ppw revie
 				return fmt.Errorf("--dir is required")
 			}
 
-			provider := providerForRun(dryRun)
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			if corpusPath == "" {
+				corpusPath = cfg.AI.CorpusPath
+			}
+			provider := providerForRun(cfg, dryRun)
 
-			session, err := openCommandLogSession("pipeline", os.Stderr)
+			session, err := openCommandLogSession("pipeline", cfg, os.Stderr)
 			if err != nil {
 				return err
 			}
 			success := false
 			defer func() { _ = session.Close(success) }()
-			sweepLogsNow(session.Writer)
+			sweepLogsNow(cfg, session.Writer)
 			writeLogLine(session.Writer, "[pipeline] Log stream: %s", session.RuntimePath)
 			writeLogLine(session.Writer, "[pipeline] Job log: %s", session.JobPath)
 

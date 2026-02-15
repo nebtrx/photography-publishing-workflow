@@ -81,10 +81,10 @@ type TokenStatus struct {
 // NewManager creates a manager and its backing store.
 func NewManager(cfg Config, storePath string) (*Manager, error) {
 	if strings.TrimSpace(cfg.AppID) == "" {
-		return nil, fmt.Errorf("META_APP_ID is required")
+		return nil, fmt.Errorf("meta.app_id is required")
 	}
 	if strings.TrimSpace(cfg.AppSecret) == "" {
-		return nil, fmt.Errorf("META_APP_SECRET is required")
+		return nil, fmt.Errorf("meta.app_secret is required")
 	}
 
 	if cfg.HTTPClient == nil {
@@ -165,7 +165,7 @@ func (m *Manager) Clear() error {
 // MetaAuthURL returns the Meta OAuth authorize URL.
 func (m *Manager) MetaAuthURL(redirectURI, state string, scopes []string) (string, error) {
 	if strings.TrimSpace(m.cfg.AppID) == "" {
-		return "", fmt.Errorf("META_APP_ID is required")
+		return "", fmt.Errorf("meta.app_id is required")
 	}
 	if strings.TrimSpace(redirectURI) == "" {
 		return "", fmt.Errorf("redirect URI is required")
@@ -190,7 +190,7 @@ func (m *Manager) MetaAuthURL(redirectURI, state string, scopes []string) (strin
 func (m *Manager) ThreadsAuthURL(redirectURI, state string, scopes []string) (string, error) {
 	appID := m.threadsAppID()
 	if strings.TrimSpace(appID) == "" {
-		return "", fmt.Errorf("THREADS_APP_ID or META_APP_ID is required")
+		return "", fmt.Errorf("threads.app_id or meta.app_id is required")
 	}
 	if strings.TrimSpace(redirectURI) == "" {
 		return "", fmt.Errorf("redirect URI is required")
@@ -347,7 +347,7 @@ func (m *Manager) ThreadsAccessToken(ctx context.Context) (string, error) {
 // PageAccessToken derives a Page token from the current Meta user token.
 func (m *Manager) PageAccessToken(ctx context.Context) (string, error) {
 	if strings.TrimSpace(m.cfg.PageID) == "" {
-		return "", fmt.Errorf("META_PAGE_ID is required")
+		return "", fmt.Errorf("meta.page_id is required")
 	}
 
 	userTok, err := m.MetaUserToken(ctx)
@@ -531,14 +531,14 @@ func expiryFromExpiresIn(expiresIn int64) time.Time {
 
 func (m *Manager) requireAppCredentials() error {
 	if strings.TrimSpace(m.cfg.AppID) == "" || strings.TrimSpace(m.cfg.AppSecret) == "" {
-		return fmt.Errorf("META_APP_ID and META_APP_SECRET are required")
+		return fmt.Errorf("meta.app_id and meta.app_secret are required")
 	}
 	return nil
 }
 
 func (m *Manager) requireThreadsAppCredentials() error {
 	if strings.TrimSpace(m.threadsAppID()) == "" || strings.TrimSpace(m.threadsAppSecret()) == "" {
-		return fmt.Errorf("THREADS_APP_ID/THREADS_APP_SECRET (or META_APP_ID/META_APP_SECRET fallback) are required")
+		return fmt.Errorf("threads.app_id/threads.app_secret (or meta.app_id/meta.app_secret fallback) are required")
 	}
 	return nil
 }

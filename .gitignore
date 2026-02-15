@@ -21,3 +21,6 @@ state/
 
 # Style corpus (personal content)
 config/style_corpus.json
+
+# Local runtime config with secrets
+config/ppw.toml

@@ -1,7 +1,7 @@
 // Package authstore provides secure persistent storage for OAuth token material.
 //
 // The store uses:
-//   - default location: ~/.ppw/tokens.json (override via PPW_TOKEN_STORE)
+//   - default location: ~/.ppw/tokens.json
 //   - atomic writes (temp file + rename)
 //   - restrictive permissions (dir 0700, file 0600)
 //   - process and file locking for safe concurrent updates
@@ -67,7 +67,7 @@ type Store struct {
 // If path is empty, DefaultPath() is used.
 func New(path string) (*Store, error) {
 	var err error
-	if strings.TrimSpace(path) == "" {
+	if path == "" {
 		path, err = DefaultPath()
 		if err != nil {
 			return nil, err
@@ -82,14 +82,7 @@ func New(path string) (*Store, error) {
 }
 
 // DefaultPath resolves the token store path.
-// Priority:
-// 1) PPW_TOKEN_STORE if set
-// 2) ~/.ppw/tokens.json
 func DefaultPath() (string, error) {
-	if v := strings.TrimSpace(os.Getenv("PPW_TOKEN_STORE")); v != "" {
-		return expandPath(v)
-	}
-
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve home directory: %w", err)

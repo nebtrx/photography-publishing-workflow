@@ -27,6 +27,7 @@ func main() {
 	root.AddCommand(scheduleCmd())
 	root.AddCommand(pipelineCmd())
 	root.AddCommand(watchCmd())
+	root.AddCommand(logsCmd())
 	root.AddCommand(authCmd())
 
 	if err := root.Execute(); err != nil {

@@ -718,3 +718,113 @@ Store value indicated `meta.user_expires_at` was written near current time.
 **Validation:**
 - `/opt/homebrew/bin/go test ./...` passed
 - `/opt/homebrew/bin/go build -o bin/ppw ./cmd/ppw` passed
+
+## 2026-02-15 — `ppw logs` command for structured log inspection
+**Context:** After introducing structured per-job logs, operational usage needed a first-class CLI reader with filters (post/module/action/outcome/job).
+
+**Implemented:**
+- Added new command in `cmd/ppw/logs.go` and wired in `cmd/ppw/main.go`:
+  - `ppw logs`
+  - filters:
+    - `--job-id`
+    - `--post-id`
+    - `--module`
+    - `--action`
+    - `--outcome`
+    - `--since`
+    - `--limit`
+    - `--json`
+- Reader behavior:
+  - reads per-job files from `PPW_LOG_DIR/jobs`
+  - parses structured JSON events (`internal/obslog.Event`)
+  - derives job_id from filename when missing in event payload
+  - sorts by event timestamp and returns most recent entries when `--limit` is set
+- Added tests:
+  - `cmd/ppw/logs_test.go`
+    - filter correctness
+    - derived job_id behavior
+    - limit behavior (most recent N)
+    - formatted line output checks
+- Updated README with usage examples for `ppw logs`.
+
+**Validation:**
+- `/opt/homebrew/bin/go test ./...` passed
+- `/opt/homebrew/bin/go build -o bin/ppw ./cmd/ppw` passed
+- `./bin/ppw --help` shows `logs` command
+- `./bin/ppw logs --help` shows filter flags and examples
+
+## 2026-02-16 — Single runtime config entrypoint (`ppw.toml`) migration
+**Context:** Runtime behavior was split between `.env` and `config/ppw.toml`, causing ambiguity (e.g., AI provider mismatch at execution time).
+
+**Directive/orchestration artifacts:**
+- `directives/single_config_entrypoint_toml.md`
+- `directives/orchestration_single_config_entrypoint_toml.md`
+
+**Implemented:**
+- Expanded config schema in `internal/config/config.go` to cover runtime domains:
+  - `watch`, `ai`, `r2`, `meta`, `threads`, `auth`, `publishing`, `logging`, `archive`
+  - Added defaults and provider normalization (`claude`/`codex`).
+  - Added `NormalizeSecretLike` helper for quoted/whitespace-safe secret parsing.
+- Replaced active runtime env wiring with TOML wiring in command paths:
+  - `cmd/ppw/default.go`
+    - AI provider now built from `cfg.AI.*`.
+    - publisher setup now uses `cfg.R2.*`, `cfg.Meta.*`, `cfg.Publishing.*`, `cfg.Threads.*`.
+    - managed/static IG token mode now reads from config (`meta.legacy_access_token` fallback).
+  - `cmd/ppw/publish.go`
+    - uses config for log session, R2, IG/auth manager, syndication strict/destinations defaults.
+  - `cmd/ppw/watch.go`, `cmd/ppw/pipeline.go`, `cmd/ppw/enrich.go`
+    - load config before execution, derive AI provider from TOML.
+  - `cmd/ppw/scrape.go`
+    - token source now managed auth from config (`ppw auth login`) with optional config legacy fallback.
+  - `cmd/ppw/auth_common.go` + `cmd/ppw/auth.go`
+    - auth manager now built from TOML (`meta.*`, `threads.*`, `auth.token_store`).
+- Logging/retention config now TOML-driven:
+  - `cmd/ppw/logging.go` now accepts runtime config and derives `joblog.Config` from `[logging]`.
+  - `cmd/ppw/logs.go` now reads log directory from config.
+- Token store env fallback removed:
+  - `internal/authstore/store.go` default path is now only `~/.ppw/tokens.json` unless explicit path is passed from config.
+- Updated `internal/authn/manager.go` user-facing error strings to config-key terminology.
+- Added static-token constructor:
+  - `internal/instagram/client.go` → `NewClientWithStaticToken(userID, token)`
+- Build consistency:
+  - `Makefile` now auto-selects `/opt/homebrew/bin/go` when present to avoid stale PATH Go binaries.
+
+**Config/docs updates:**
+- `config/ppw.toml` replaced with full runtime schema template (single entrypoint).
+- `.env.sample` now explicitly marks env runtime as deprecated (only optional `PPW_CONFIG` path override documented).
+- `README.md` updated to TOML-only runtime configuration model.
+
+**Tests/validation:**
+- Updated tests for new config-driven wiring:
+  - `cmd/ppw/provider_wiring_test.go`
+  - `cmd/ppw/logging_test.go`
+  - `internal/authstore/store_test.go`
+- Validation passed:
+  - `/opt/homebrew/bin/go mod tidy`
+  - `/opt/homebrew/bin/go test ./...`
+  - `make build`
+
+## 2026-02-16 — Local config migration executed (`.env` -> `config/ppw.toml`)
+**Context:** After TOML-only runtime migration, local execution still required copying existing developer values from `.env` into `config/ppw.toml`.
+
+**Executed:**
+- Migrated local values for sections:
+  - `[r2]`
+  - `[meta]`
+  - `[threads]`
+- Kept defaults for `[auth]`, `[publishing]`, `[logging]`, and existing watch/archive settings.
+
+**Verification:**
+- `./bin/ppw auth status` executed successfully against `~/.ppw/tokens.json`.
+- Confirms runtime now reads platform/app configuration from `config/ppw.toml`.
+
+## 2026-02-16 — Tracked config template added (`config/ppw.toml.example`)
+**Context:** `config/ppw.toml` now contains secrets and is intentionally untracked.
+
+**Implemented:**
+- Added tracked template: `config/ppw.toml.example` (safe placeholders only).
+- Updated `README.md` configuration section to include:
+  - `cp config/ppw.toml.example config/ppw.toml`
+
+**Result:**
+- Repo keeps a canonical non-secret config template while local secret config remains private.

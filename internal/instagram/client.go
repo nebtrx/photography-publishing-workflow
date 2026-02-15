@@ -57,6 +57,28 @@ func NewClient() (*Client, error) {
 	}, nil
 }
 
+// NewClientWithStaticToken creates a static-token client from explicit values.
+func NewClientWithStaticToken(userID, accessToken string) (*Client, error) {
+	userID = normalizeUserID(userID)
+	token := normalizeAccessToken(accessToken)
+
+	if userID == "" {
+		return nil, fmt.Errorf("INSTAGRAM_USER_ID is required")
+	}
+	if !isNumericID(userID) {
+		return nil, fmt.Errorf("INSTAGRAM_USER_ID must be a numeric Instagram user ID (e.g. 1784...), got %q (username/handle is not valid here)", userID)
+	}
+	if token == "" {
+		return nil, fmt.Errorf("INSTAGRAM_ACCESS_TOKEN is required")
+	}
+
+	return &Client{
+		UserID:      userID,
+		AccessToken: token,
+		HTTPClient:  &http.Client{Timeout: 30 * time.Second},
+	}, nil
+}
+
 // NewClientWithTokenSource creates a Client that obtains tokens dynamically.
 // tokenFn is called before each API request to get the current access token.
 // onTokenError is called on 401 to allow cache invalidation before retry.
@@ -229,10 +251,10 @@ func isTokenError(status int, body []byte) bool {
 func parseAPIError(statusCode int, body []byte) error {
 	var errResp struct {
 		Error struct {
-			Message  string `json:"message"`
-			Type     string `json:"type"`
-			Code     int    `json:"code"`
-			FbTrace  string `json:"fbtrace_id"`
+			Message string `json:"message"`
+			Type    string `json:"type"`
+			Code    int    `json:"code"`
+			FbTrace string `json:"fbtrace_id"`
 		} `json:"error"`
 	}
 	if json.Unmarshal(body, &errResp) == nil && errResp.Error.Message != "" {

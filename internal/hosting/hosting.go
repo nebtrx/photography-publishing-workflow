@@ -27,44 +27,55 @@ type Host interface {
 // R2Config holds Cloudflare R2 connection parameters.
 type R2Config struct {
 	AccessKeyID     string
-	SecretAccessKey  string
+	SecretAccessKey string
 	Bucket          string
 	Endpoint        string // e.g. https://<account-id>.r2.cloudflarestorage.com
 	PublicURL       string // e.g. https://pub-xxx.r2.dev
 }
 
-// R2ConfigFromEnv loads R2 config from environment variables.
-func R2ConfigFromEnv() (*R2Config, error) {
+// R2ConfigFromValues loads R2 config from explicit values.
+func R2ConfigFromValues(accessKeyID, secretAccessKey, bucket, endpoint, publicURL string) (*R2Config, error) {
 	cfg := &R2Config{
-		AccessKeyID:    os.Getenv("R2_ACCESS_KEY_ID"),
-		SecretAccessKey: os.Getenv("R2_SECRET_ACCESS_KEY"),
-		Bucket:         os.Getenv("R2_BUCKET"),
-		Endpoint:       os.Getenv("R2_ENDPOINT"),
-		PublicURL:      os.Getenv("R2_PUBLIC_URL"),
+		AccessKeyID:     strings.TrimSpace(accessKeyID),
+		SecretAccessKey: strings.TrimSpace(secretAccessKey),
+		Bucket:          strings.TrimSpace(bucket),
+		Endpoint:        strings.TrimSpace(endpoint),
+		PublicURL:       strings.TrimSpace(publicURL),
 	}
 
 	var missing []string
 	if cfg.AccessKeyID == "" {
-		missing = append(missing, "R2_ACCESS_KEY_ID")
+		missing = append(missing, "r2.access_key_id")
 	}
 	if cfg.SecretAccessKey == "" {
-		missing = append(missing, "R2_SECRET_ACCESS_KEY")
+		missing = append(missing, "r2.secret_access_key")
 	}
 	if cfg.Bucket == "" {
-		missing = append(missing, "R2_BUCKET")
+		missing = append(missing, "r2.bucket")
 	}
 	if cfg.Endpoint == "" {
-		missing = append(missing, "R2_ENDPOINT")
+		missing = append(missing, "r2.endpoint")
 	}
 	if cfg.PublicURL == "" {
-		missing = append(missing, "R2_PUBLIC_URL")
+		missing = append(missing, "r2.public_url")
 	}
 
 	if len(missing) > 0 {
-		return nil, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
+		return nil, fmt.Errorf("missing required config values: %s", strings.Join(missing, ", "))
 	}
 
 	return cfg, nil
+}
+
+// R2ConfigFromEnv loads R2 config from environment variables.
+func R2ConfigFromEnv() (*R2Config, error) {
+	return R2ConfigFromValues(
+		os.Getenv("R2_ACCESS_KEY_ID"),
+		os.Getenv("R2_SECRET_ACCESS_KEY"),
+		os.Getenv("R2_BUCKET"),
+		os.Getenv("R2_ENDPOINT"),
+		os.Getenv("R2_PUBLIC_URL"),
+	)
 }
 
 // R2 implements Host using Cloudflare R2 (S3-compatible).
@@ -176,8 +187,8 @@ func (m *MemoryHost) Delete(_ context.Context, key string) error {
 
 // Ensure interfaces are satisfied.
 var (
-	_ Host = (*R2)(nil)
-	_ Host = (*DryRunHost)(nil)
-	_ Host = (*MemoryHost)(nil)
+	_ Host      = (*R2)(nil)
+	_ Host      = (*DryRunHost)(nil)
+	_ Host      = (*MemoryHost)(nil)
 	_ io.Reader // suppress unused import if needed
 )

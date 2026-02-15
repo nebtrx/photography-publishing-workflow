@@ -4,13 +4,15 @@ import (
 	"testing"
 
 	"photography-publishing-workflow/internal/ai"
+	"photography-publishing-workflow/internal/config"
 )
 
 func TestBuildAIProvider_DefaultClaude(t *testing.T) {
-	t.Setenv("PPW_AI_PROVIDER", "")
-	t.Setenv("CLAUDE_CLI_PATH", "/tmp/claude")
+	cfg := &config.Config{}
+	cfg.AI.Provider = "claude"
+	cfg.AI.ClaudeCLIPath = "/tmp/claude"
 
-	provider := buildAIProvider()
+	provider := buildAIProvider(cfg)
 	claude, ok := provider.(*ai.ClaudeCLI)
 	if !ok {
 		t.Fatalf("provider type = %T, want *ai.ClaudeCLI", provider)
@@ -21,11 +23,12 @@ func TestBuildAIProvider_DefaultClaude(t *testing.T) {
 }
 
 func TestBuildAIProvider_Codex(t *testing.T) {
-	t.Setenv("PPW_AI_PROVIDER", "codex")
-	t.Setenv("CODEX_CLI_PATH", "/tmp/codex")
-	t.Setenv("CODEX_MODEL", "gpt-5.2")
+	cfg := &config.Config{}
+	cfg.AI.Provider = "codex"
+	cfg.AI.CodexCLIPath = "/tmp/codex"
+	cfg.AI.CodexModel = "gpt-5.2"
 
-	provider := buildAIProvider()
+	provider := buildAIProvider(cfg)
 	codex, ok := provider.(*ai.CodexCLI)
 	if !ok {
 		t.Fatalf("provider type = %T, want *ai.CodexCLI", provider)
@@ -39,11 +42,12 @@ func TestBuildAIProvider_Codex(t *testing.T) {
 }
 
 func TestProviderForRun_DryRunDisablesAI(t *testing.T) {
-	t.Setenv("PPW_AI_PROVIDER", "codex")
-	if provider := providerForRun(true); provider != nil {
+	cfg := &config.Config{}
+	cfg.AI.Provider = "codex"
+	if provider := providerForRun(cfg, true); provider != nil {
 		t.Fatalf("providerForRun(true) = %T, want nil", provider)
 	}
-	if provider := providerForRun(false); provider == nil {
+	if provider := providerForRun(cfg, false); provider == nil {
 		t.Fatal("providerForRun(false) should return a provider")
 	}
 }

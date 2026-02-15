@@ -54,6 +54,13 @@ Show CLI help:
 ./bin/ppw --help
 ```
 
+Inspect structured logs:
+
+```bash
+./bin/ppw logs --limit 200
+./bin/ppw logs --module publisher --outcome failure --since 24h
+```
+
 One-time managed auth bootstrap:
 
 ```bash
@@ -74,20 +81,30 @@ Launch unified TUI:
 ./bin/ppw
 ```
 
-## Environment and Config
+## Configuration
 
-Use `.env.sample` as the contract for required/optional environment variables.
+`ppw` now uses a single runtime config entrypoint: `config/ppw.toml`.
 
-Current key groups:
+Setup:
 
-- Cloudflare R2 credentials (publishing host)
-- Platform IDs/config (`INSTAGRAM_USER_ID`, `META_APP_ID`, `META_APP_SECRET`, `META_PAGE_ID`, `THREADS_USER_ID`)
-- Optional Threads app override when Threads uses a different Meta app (`THREADS_APP_ID`, `THREADS_APP_SECRET`)
-- Token store path override (`PPW_TOKEN_STORE`, default `~/.ppw/tokens.json`)
-- Runtime log file override (`PPW_LOG_FILE`, default `~/.ppw/ppw.log`)
-- Job log retention controls (`PPW_LOG_DIR`, `PPW_LOG_SUCCESS_TTL`, `PPW_LOG_FAILED_TTL`, `PPW_LOG_SWEEP_INTERVAL`)
-- Syndication behavior (`PUBLISH_DESTINATIONS`, `STRICT_SYNDICATION`)
-- Legacy/manual token vars (temporary during auth automation migration)
+```bash
+cp config/ppw.toml.example config/ppw.toml
+```
+
+All runtime behavior is configured there:
+- AI provider and CLI settings (`[ai]`)
+- R2 hosting credentials (`[r2]`)
+- Meta/Instagram IDs + app credentials (`[meta]`)
+- Threads IDs + app credentials (`[threads]`)
+- Auth token store path (`[auth]`)
+- Syndication defaults (`[publishing]`)
+- Runtime/job logs + retention (`[logging]`)
+- Watch/archive paths (`[watch]`, `[archive]`)
+
+Optional override:
+- `PPW_CONFIG` can point to an alternative TOML path.
+
+`.env` is deprecated for runtime behavior and should not be relied on.
 
 ## How to Navigate This Repo
 
@@ -147,9 +164,9 @@ For Claude sessions:
 
 ## Security Notes
 
-- Never commit real secrets in `.env`.
-- Keep `.env` local; use placeholders in `.env.sample`.
-- Token material should live in `~/.ppw/tokens.json` (outside repo) as auth automation is completed.
+- Never commit real secrets in `config/ppw.toml`.
+- Keep token material in `~/.ppw/tokens.json` (outside repo).
+- If you still keep a local `.env` for shell convenience, do not treat it as runtime config.
 
 ## License
 

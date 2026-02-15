@@ -30,24 +30,28 @@ func publishCmd() *cobra.Command {
 		Long: `Upload images to Cloudflare R2, create Instagram media containers,
 publish the post (and optionally story), and record the result.
 
-Requires environment variables:
-  INSTAGRAM_USER_ID
-  R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET, R2_ENDPOINT, R2_PUBLIC_URL
+Configuration is read from ppw.toml:
+  [meta] instagram_user_id, app_id, app_secret, page_id
+  [r2] access_key_id, secret_access_key, bucket, endpoint, public_url
+  [publishing] destinations, strict_syndication
+  [threads] user_id (for threads syndication)
 
-Recommended managed auth:
-  META_APP_ID, META_APP_SECRET, META_PAGE_ID
-  (run "ppw auth login" once to persist tokens)
-
-Optional (for syndication):
-  PUBLISH_DESTINATIONS (instagram,facebook,threads)
-  STRICT_SYNDICATION
-  THREADS_USER_ID
-
-Legacy fallback (temporary during migration):
-  INSTAGRAM_ACCESS_TOKEN, THREADS_ACCESS_TOKEN`,
+Managed auth flow:
+  ppw auth login
+Tokens are stored in the configured auth token store.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if manifestPath == "" {
 				return fmt.Errorf("--manifest is required")
+			}
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			if !cmd.Flags().Lookup("destinations").Changed {
+				destinations = defaultDestinations(cfg)
+			}
+			if !cmd.Flags().Lookup("strict-syndication").Changed {
+				strictSyn = cfg.Publishing.StrictSyndication
 			}
 
 			m, err := manifest.Read(manifestPath)
@@ -58,13 +62,13 @@ Legacy fallback (temporary during migration):
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 
-			session, err := openCommandLogSession("publish", os.Stderr)
+			session, err := openCommandLogSession("publish", cfg, os.Stderr)
 			if err != nil {
 				return err
 			}
 			success := false
 			defer func() { _ = session.Close(success) }()
-			sweepLogsNow(session.Writer)
+			sweepLogsNow(cfg, session.Writer)
 			writeLogLine(session.Writer, "[publish] Log stream: %s", session.RuntimePath)
 			writeLogLine(session.Writer, "[publish] Job log: %s", session.JobPath)
 
@@ -73,7 +77,13 @@ Legacy fallback (temporary during migration):
 			if dryRun {
 				host = &hosting.DryRunHost{}
 			} else {
-				r2Cfg, err := hosting.R2ConfigFromEnv()
+				r2Cfg, err := hosting.R2ConfigFromValues(
+					cfg.R2.AccessKeyID,
+					cfg.R2.SecretAccessKey,
+					cfg.R2.Bucket,
+					cfg.R2.Endpoint,
+					cfg.R2.PublicURL,
+				)
 				if err != nil {
 					return fmt.Errorf("R2 config: %w", err)
 				}
@@ -90,9 +100,9 @@ Legacy fallback (temporary during migration):
 			if dryRun {
 				ig = &dryRunInstagram{}
 			} else {
-				igClient, tokenManager := buildInstagramClientWithMeta(session.Writer)
+				igClient, tokenManager := buildInstagramClientWithMeta(cfg, session.Writer)
 				if igClient == nil {
-					return fmt.Errorf("Instagram client: set INSTAGRAM_USER_ID and run `ppw auth login` (or provide legacy INSTAGRAM_ACCESS_TOKEN)")
+					return fmt.Errorf("Instagram client: set meta.instagram_user_id and run `ppw auth login` (or provide meta.legacy_access_token)")
 				}
 				ig = igClient
 				authMgr = tokenManager
@@ -103,7 +113,7 @@ Legacy fallback (temporary during migration):
 				return err
 			}
 
-			opts, err := buildSyndicationOptions(ctx, authMgr, enableFacebook, enableThreads, strictSyn, dryRun)
+			opts, err := buildSyndicationOptions(ctx, cfg, authMgr, enableFacebook, enableThreads, strictSyn, dryRun)
 			if err != nil {
 				return fmt.Errorf("syndication options: %w", err)
 			}
@@ -138,8 +148,8 @@ Legacy fallback (temporary during migration):
 	cmd.Flags().StringVar(&manifestPath, "manifest", "", "Path to the manifest.json to publish")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Log the full API call sequence without executing")
 	cmd.Flags().DurationVar(&timeout, "timeout", 10*time.Minute, "Overall timeout for the publish operation")
-	cmd.Flags().StringVar(&destinations, "destinations", defaultDestinations(), "Comma-separated destinations: instagram,facebook,threads")
-	cmd.Flags().BoolVar(&strictSyn, "strict-syndication", envBool("STRICT_SYNDICATION"), "Fail the run if any enabled syndication destination fails")
+	cmd.Flags().StringVar(&destinations, "destinations", "instagram", "Comma-separated destinations: instagram,facebook,threads")
+	cmd.Flags().BoolVar(&strictSyn, "strict-syndication", false, "Fail the run if any enabled syndication destination fails")
 
 	return cmd
 }

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
+	"photography-publishing-workflow/internal/config"
 	"photography-publishing-workflow/internal/scraper"
 )
 
@@ -27,10 +29,22 @@ func scrapeCmd() *cobra.Command {
 			if handle == "" && userID == "" {
 				return fmt.Errorf("--handle or --user-id is required")
 			}
-
-			accessToken := os.Getenv("INSTAGRAM_ACCESS_TOKEN")
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			accessToken := ""
+			authMgr, err := buildAuthManager(cfg)
+			if err == nil && authMgr != nil {
+				if tok, tokErr := authMgr.MetaUserToken(context.Background()); tokErr == nil {
+					accessToken = tok
+				}
+			}
 			if accessToken == "" {
-				return fmt.Errorf("INSTAGRAM_ACCESS_TOKEN environment variable is required")
+				accessToken = config.NormalizeSecretLike(cfg.Meta.LegacyAccessToken)
+			}
+			if accessToken == "" && !dryRun {
+				return fmt.Errorf("scrape requires managed auth (`ppw auth login`) or meta.legacy_access_token")
 			}
 
 			if outPath == "" {
@@ -57,7 +71,7 @@ func scrapeCmd() *cobra.Command {
 				return nil
 			}
 
-			cfg := scraper.Config{
+			scrapeCfg := scraper.Config{
 				AccessToken: accessToken,
 				UserID:      userID,
 				Count:       count,
@@ -65,7 +79,7 @@ func scrapeCmd() *cobra.Command {
 			}
 
 			fmt.Printf("Scraping up to %d captions...\n", count)
-			corpus, err := scraper.Scrape(cfg)
+			corpus, err := scraper.Scrape(scrapeCfg)
 			if err != nil {
 				return fmt.Errorf("scrape: %w", err)
 			}

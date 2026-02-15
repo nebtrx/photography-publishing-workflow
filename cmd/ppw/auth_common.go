@@ -1,16 +1,17 @@
 package main
 
 import (
-	"os"
-	"strings"
-
 	"photography-publishing-workflow/internal/authn"
+	"photography-publishing-workflow/internal/config"
 )
 
-func buildAuthManager() (*authn.Manager, error) {
-	appID := normalizeEnvSecretLike(os.Getenv("META_APP_ID"))
-	appSecret := normalizeEnvSecretLike(os.Getenv("META_APP_SECRET"))
-	pageID := normalizeEnvSecretLike(os.Getenv("META_PAGE_ID"))
+func buildAuthManager(cfg *config.Config) (*authn.Manager, error) {
+	if cfg == nil {
+		return nil, nil
+	}
+	appID := normalizeConfigSecretLike(cfg.Meta.AppID)
+	appSecret := normalizeConfigSecretLike(cfg.Meta.AppSecret)
+	pageID := normalizeConfigSecretLike(cfg.Meta.PageID)
 
 	// Not configured: caller can fall back to legacy token mode.
 	if appID == "" || appSecret == "" {
@@ -20,14 +21,12 @@ func buildAuthManager() (*authn.Manager, error) {
 	return authn.NewManager(authn.Config{
 		AppID:            appID,
 		AppSecret:        appSecret,
-		ThreadsAppID:     normalizeEnvSecretLike(os.Getenv("THREADS_APP_ID")),
-		ThreadsAppSecret: normalizeEnvSecretLike(os.Getenv("THREADS_APP_SECRET")),
+		ThreadsAppID:     normalizeConfigSecretLike(cfg.Threads.AppID),
+		ThreadsAppSecret: normalizeConfigSecretLike(cfg.Threads.AppSecret),
 		PageID:           pageID,
-	}, strings.TrimSpace(os.Getenv("PPW_TOKEN_STORE")))
+	}, normalizeConfigSecretLike(cfg.Auth.TokenStore))
 }
 
-func normalizeEnvSecretLike(v string) string {
-	s := strings.TrimSpace(v)
-	s = strings.Trim(s, `"'`)
-	return strings.TrimSpace(s)
+func normalizeConfigSecretLike(v string) string {
+	return config.NormalizeSecretLike(v)
 }

@@ -34,7 +34,7 @@ Primary flow:
   ppw auth login
   ppw auth status
 
-Tokens are stored in PPW_TOKEN_STORE (default: ~/.ppw/tokens.json).`,
+Tokens are stored at auth.token_store from ppw.toml (default: ~/.ppw/tokens.json).`,
 	}
 	cmd.AddCommand(authLoginCmd())
 	cmd.AddCommand(authStatusCmd())
@@ -64,12 +64,16 @@ func authLoginCmd() *cobra.Command {
 				return fmt.Errorf("choose either --meta-only or --threads-only, not both")
 			}
 
-			authMgr, err := buildAuthManager()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			authMgr, err := buildAuthManager(cfg)
 			if err != nil {
 				return err
 			}
 			if authMgr == nil {
-				return fmt.Errorf("managed auth requires META_APP_ID and META_APP_SECRET")
+				return fmt.Errorf("managed auth requires meta.app_id and meta.app_secret in ppw.toml")
 			}
 
 			enableMeta := !threadsOnly
@@ -147,12 +151,16 @@ func authStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show stored token status from PPW token store",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			authMgr, err := buildAuthManager()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			authMgr, err := buildAuthManager(cfg)
 			if err != nil {
 				return err
 			}
 			if authMgr == nil {
-				return fmt.Errorf("managed auth requires META_APP_ID and META_APP_SECRET")
+				return fmt.Errorf("managed auth requires meta.app_id and meta.app_secret in ppw.toml")
 			}
 			status, err := authMgr.Status()
 			if err != nil {
@@ -177,12 +185,16 @@ func authRefreshCmd() *cobra.Command {
 			if metaOnly && threadsOnly {
 				return fmt.Errorf("choose either --meta-only or --threads-only, not both")
 			}
-			authMgr, err := buildAuthManager()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			authMgr, err := buildAuthManager(cfg)
 			if err != nil {
 				return err
 			}
 			if authMgr == nil {
-				return fmt.Errorf("managed auth requires META_APP_ID and META_APP_SECRET")
+				return fmt.Errorf("managed auth requires meta.app_id and meta.app_secret in ppw.toml")
 			}
 
 			enableMeta := !threadsOnly
@@ -225,12 +237,16 @@ func authLogoutCmd() *cobra.Command {
 			if !yes {
 				return fmt.Errorf("logout requires --yes confirmation")
 			}
-			authMgr, err := buildAuthManager()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			authMgr, err := buildAuthManager(cfg)
 			if err != nil {
 				return err
 			}
 			if authMgr == nil {
-				return fmt.Errorf("managed auth requires META_APP_ID and META_APP_SECRET")
+				return fmt.Errorf("managed auth requires meta.app_id and meta.app_secret in ppw.toml")
 			}
 			if err := authMgr.Clear(); err != nil {
 				return err

@@ -5,11 +5,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"photography-publishing-workflow/internal/config"
 )
 
 func TestRuntimeLogPath_Default(t *testing.T) {
-	t.Setenv("PPW_LOG_FILE", "")
-	path, err := runtimeLogPath()
+	path, err := runtimeLogPath(&config.Config{})
 	if err != nil {
 		t.Fatalf("runtimeLogPath: %v", err)
 	}
@@ -20,10 +21,11 @@ func TestRuntimeLogPath_Default(t *testing.T) {
 
 func TestOpenCommandLogSession_WritesAndFinalizesJobLog(t *testing.T) {
 	base := t.TempDir()
-	t.Setenv("PPW_LOG_FILE", filepath.Join(base, "runtime.log"))
-	t.Setenv("PPW_LOG_DIR", filepath.Join(base, "logs"))
+	cfg := &config.Config{}
+	cfg.Logging.RuntimeLogFile = filepath.Join(base, "runtime.log")
+	cfg.Logging.JobLogDir = filepath.Join(base, "logs")
 
-	session, err := openCommandLogSession("pipeline", nil)
+	session, err := openCommandLogSession("pipeline", cfg, nil)
 	if err != nil {
 		t.Fatalf("openCommandLogSession: %v", err)
 	}

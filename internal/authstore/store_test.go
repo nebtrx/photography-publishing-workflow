@@ -8,21 +8,8 @@ import (
 	"time"
 )
 
-func TestDefaultPath_EnvOverride(t *testing.T) {
-	t.Setenv("PPW_TOKEN_STORE", "/tmp/ppw-custom-tokens.json")
-
-	got, err := DefaultPath()
-	if err != nil {
-		t.Fatalf("DefaultPath: %v", err)
-	}
-	if got != "/tmp/ppw-custom-tokens.json" {
-		t.Fatalf("DefaultPath = %q, want %q", got, "/tmp/ppw-custom-tokens.json")
-	}
-}
-
 func TestDefaultPath_UsesHome(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("PPW_TOKEN_STORE", "")
 	t.Setenv("HOME", home)
 
 	got, err := DefaultPath()

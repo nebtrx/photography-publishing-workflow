@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -33,7 +32,7 @@ func runDefault() error {
 	// Build optional dependencies from config + env
 	eventCh := make(chan tea.Msg, 256)
 	eventLogWriter := tui.NewEventLogWriter(eventCh)
-	session, err := openCommandLogSession("tui", eventLogWriter)
+	session, err := openCommandLogSession("tui", cfg, eventLogWriter)
 	if err != nil {
 		eventCh <- tui.AppLogMsg{Line: fmt.Sprintf("[runtime] WARN: persistent logging disabled: %v", err)}
 		session = &CommandLogSession{Writer: eventLogWriter}
@@ -45,8 +44,8 @@ func runDefault() error {
 
 	sweepCtx, stopSweep := context.WithCancel(context.Background())
 	defer stopSweep()
-	go startPeriodicLogSweep(sweepCtx, session.Writer)
-	sweepLogsNow(session.Writer)
+	go startPeriodicLogSweep(sweepCtx, cfg, session.Writer)
+	sweepLogsNow(cfg, session.Writer)
 
 	opts := buildAppOptions(cfg, eventCh, session.Writer)
 
@@ -66,7 +65,7 @@ func loadConfig() (*config.Config, error) {
 	return config.Load(path)
 }
 
-// buildAppOptions creates optional background dependencies from config and env vars.
+// buildAppOptions creates optional background dependencies from configuration.
 // Missing credentials are not fatal — features are simply disabled.
 func buildAppOptions(cfg *config.Config, eventCh chan tea.Msg, logOutput io.Writer) tui.AppOptions {
 	var opts tui.AppOptions
@@ -78,7 +77,7 @@ func buildAppOptions(cfg *config.Config, eventCh chan tea.Msg, logOutput io.Writ
 	opts.LogOutput = logOutput
 
 	// Pipeline (needs AI provider)
-	provider := buildAIProvider()
+	provider := buildAIProvider(cfg)
 	opts.Pipeline = pipeline.New(provider, pipeline.Options{
 		CorpusPath: cfg.AI.CorpusPath,
 		LogOutput:  logOutput,
@@ -105,19 +104,25 @@ func buildAppOptions(cfg *config.Config, eventCh chan tea.Msg, logOutput io.Writ
 	return opts
 }
 
-// buildPublisher attempts to create a publisher from environment variables.
+// buildPublisher attempts to create a publisher from config values.
 // Returns nil if R2 or Instagram credentials are missing.
 //
 // Auth modes:
 //   - Managed mode: run `ppw auth login` once, then publish uses store-backed tokens.
-//   - Fallback mode: static INSTAGRAM_ACCESS_TOKEN from environment (legacy).
+//   - Fallback mode: static legacy token from `meta.legacy_access_token`.
 func buildPublisher(cfg *config.Config, logOutput io.Writer) *publisher.Publisher {
-	r2Cfg, err := hosting.R2ConfigFromEnv()
+	r2Cfg, err := hosting.R2ConfigFromValues(
+		cfg.R2.AccessKeyID,
+		cfg.R2.SecretAccessKey,
+		cfg.R2.Bucket,
+		cfg.R2.Endpoint,
+		cfg.R2.PublicURL,
+	)
 	if err != nil {
 		return nil // R2 not configured — publishing disabled
 	}
 
-	igClient, tm := buildInstagramClientWithMeta(logOutput)
+	igClient, tm := buildInstagramClientWithMeta(cfg, logOutput)
 	if igClient == nil {
 		return nil
 	}
@@ -129,13 +134,13 @@ func buildPublisher(cfg *config.Config, logOutput io.Writer) *publisher.Publishe
 		return nil
 	}
 
-	fbEnabled, threadsEnabled, err := parseDestinations(defaultDestinations())
+	fbEnabled, threadsEnabled, err := parseDestinations(defaultDestinations(cfg))
 	if err != nil {
 		writeLogLine(logOutput, "[runtime] WARN: invalid syndication destinations: %v", err)
 		fbEnabled, threadsEnabled = false, false
 	}
 
-	opts, err := buildSyndicationOptions(ctx, tm, fbEnabled, threadsEnabled, envBool("STRICT_SYNDICATION"), false)
+	opts, err := buildSyndicationOptions(ctx, cfg, tm, fbEnabled, threadsEnabled, cfg.Publishing.StrictSyndication, false)
 	if err != nil {
 		writeLogLine(logOutput, "[runtime] WARN: syndication disabled due setup failure: %v", err)
 		opts = publisher.Options{}
@@ -145,40 +150,46 @@ func buildPublisher(cfg *config.Config, logOutput io.Writer) *publisher.Publishe
 	return publisher.New(r2, igClient, opts)
 }
 
-// buildAIProvider creates an AI provider based on PPW_AI_PROVIDER env var.
+// buildAIProvider creates an AI provider from configuration.
 // Supported values: "claude" (default), "codex".
-func buildAIProvider() ai.Provider {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("PPW_AI_PROVIDER"))) {
+func buildAIProvider(cfg *config.Config) ai.Provider {
+	if cfg == nil {
+		return ai.NewClaudeCLI("")
+	}
+	switch cfg.AI.Provider {
 	case "codex":
-		return ai.NewCodexCLI(os.Getenv("CODEX_CLI_PATH"), os.Getenv("CODEX_MODEL"))
+		return ai.NewCodexCLI(cfg.AI.CodexCLIPath, cfg.AI.CodexModel)
 	default:
-		return ai.NewClaudeCLI(os.Getenv("CLAUDE_CLI_PATH"))
+		return ai.NewClaudeCLI(cfg.AI.ClaudeCLIPath)
 	}
 }
 
-func providerForRun(dryRun bool) ai.Provider {
+func providerForRun(cfg *config.Config, dryRun bool) ai.Provider {
 	if dryRun {
 		return nil
 	}
-	return buildAIProvider()
+	return buildAIProvider(cfg)
 }
 
 // buildInstagramClient creates an Instagram client, preferring auth-managed mode.
-func buildInstagramClient() *instagram.Client {
-	client, _ := buildInstagramClientWithMeta(os.Stderr)
+func buildInstagramClient(cfg *config.Config) *instagram.Client {
+	client, _ := buildInstagramClientWithMeta(cfg, os.Stderr)
 	return client
 }
 
 // buildInstagramClientWithMeta returns the IG client and optional auth manager used for managed auth.
-func buildInstagramClientWithMeta(logOutput io.Writer) (*instagram.Client, *authn.Manager) {
-	userID := os.Getenv("INSTAGRAM_USER_ID")
-	authMgr, err := buildAuthManager()
+func buildInstagramClientWithMeta(cfg *config.Config, logOutput io.Writer) (*instagram.Client, *authn.Manager) {
+	if cfg == nil {
+		return nil, nil
+	}
+	userID := cfg.Meta.InstagramUserID
+	authMgr, err := buildAuthManager(cfg)
 	if err != nil {
 		writeLogLine(logOutput, "[runtime] WARN: auth manager setup failed: %v", err)
 	}
 
 	// Try auth-managed mode (store-backed token lifecycle).
-	if authMgr != nil && strings.TrimSpace(os.Getenv("META_PAGE_ID")) != "" {
+	if authMgr != nil && cfg.Meta.PageID != "" {
 		client, err := instagram.NewClientWithTokenSource(
 			userID,
 			func(ctx context.Context) (string, error) { return authMgr.PageAccessToken(ctx) },
@@ -193,10 +204,14 @@ func buildInstagramClientWithMeta(logOutput io.Writer) (*instagram.Client, *auth
 	}
 
 	// Fall back to static token mode
-	client, err := instagram.NewClient()
-	if err != nil {
-		return nil, nil // Instagram not configured
+	legacyToken := config.NormalizeSecretLike(cfg.Meta.LegacyAccessToken)
+	if legacyToken == "" {
+		return nil, nil
 	}
-	writeLogLine(logOutput, "[publish] Using legacy static token auth (run `ppw auth login` to migrate)")
+	client, err := instagram.NewClientWithStaticToken(userID, legacyToken)
+	if err != nil {
+		return nil, nil
+	}
+	writeLogLine(logOutput, "[publish] Using legacy static token auth from config (run `ppw auth login` to migrate)")
 	return client, nil
 }

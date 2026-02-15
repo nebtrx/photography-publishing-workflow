@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"photography-publishing-workflow/internal/authn"
+	"photography-publishing-workflow/internal/config"
 	"photography-publishing-workflow/internal/publisher"
 )
 
@@ -35,44 +35,36 @@ func parseDestinations(raw string) (facebook bool, threads bool, err error) {
 	return facebook, threads, nil
 }
 
-// defaultDestinations chooses destinations from env.
-// Priority:
-// 1) PUBLISH_DESTINATIONS if set
-// 2) legacy booleans SYNDICATE_FACEBOOK / SYNDICATE_THREADS
-// 3) instagram only
-func defaultDestinations() string {
-	if v := strings.TrimSpace(os.Getenv("PUBLISH_DESTINATIONS")); v != "" {
-		return v
+// defaultDestinations chooses destinations from config.
+func defaultDestinations(cfg *config.Config) string {
+	if cfg == nil || len(cfg.Publishing.Destinations) == 0 {
+		return "instagram"
 	}
-
-	dests := []string{"instagram"}
-	if envBool("SYNDICATE_FACEBOOK") {
-		dests = append(dests, "facebook")
+	parts := make([]string, 0, len(cfg.Publishing.Destinations))
+	for _, v := range cfg.Publishing.Destinations {
+		p := strings.TrimSpace(strings.ToLower(v))
+		if p != "" {
+			parts = append(parts, p)
+		}
 	}
-	if envBool("SYNDICATE_THREADS") {
-		dests = append(dests, "threads")
+	if len(parts) == 0 {
+		return "instagram"
 	}
-	return strings.Join(dests, ",")
-}
-
-func envBool(name string) bool {
-	v := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
-	switch v {
-	case "1", "true", "yes", "y", "on":
-		return true
-	default:
-		return false
-	}
+	return strings.Join(parts, ",")
 }
 
 func buildSyndicationOptions(
 	ctx context.Context,
+	cfg *config.Config,
 	authMgr *authn.Manager,
 	enableFacebook bool,
 	enableThreads bool,
 	strict bool,
 	dryRun bool,
 ) (publisher.Options, error) {
+	if cfg == nil {
+		cfg = &config.Config{}
+	}
 	opts := publisher.Options{
 		DryRun:            dryRun,
 		EnableFacebook:    enableFacebook,
@@ -81,11 +73,11 @@ func buildSyndicationOptions(
 	}
 
 	if enableFacebook {
-		pageID := strings.TrimSpace(os.Getenv("META_PAGE_ID"))
+		pageID := strings.TrimSpace(cfg.Meta.PageID)
 		if pageID == "" {
-			return opts, fmt.Errorf("facebook syndication requires META_PAGE_ID")
+			return opts, fmt.Errorf("facebook syndication requires meta.page_id")
 		}
-		legacyIGToken := strings.TrimSpace(os.Getenv("INSTAGRAM_ACCESS_TOKEN"))
+		legacyIGToken := config.NormalizeSecretLike(cfg.Meta.LegacyAccessToken)
 
 		var tokenFn publisher.AccessTokenSource
 		if authMgr != nil {
@@ -114,8 +106,8 @@ func buildSyndicationOptions(
 	}
 
 	if enableThreads {
-		threadsID := strings.TrimSpace(os.Getenv("THREADS_USER_ID"))
-		legacyThreadsToken := strings.TrimSpace(os.Getenv("THREADS_ACCESS_TOKEN"))
+		threadsID := strings.TrimSpace(cfg.Threads.UserID)
+		legacyThreadsToken := config.NormalizeSecretLike(cfg.Threads.LegacyAccessToken)
 		if threadsID == "" && authMgr != nil {
 			status, err := authMgr.Status()
 			if err == nil {
@@ -123,7 +115,7 @@ func buildSyndicationOptions(
 			}
 		}
 		if threadsID == "" {
-			return opts, fmt.Errorf("threads syndication requires THREADS_USER_ID (or run `ppw auth login`)")
+			return opts, fmt.Errorf("threads syndication requires threads.user_id (or run `ppw auth login`)")
 		}
 
 		var tokenFn publisher.AccessTokenSource
@@ -140,7 +132,7 @@ func buildSyndicationOptions(
 			}
 		} else {
 			if legacyThreadsToken == "" {
-				return opts, fmt.Errorf("threads syndication requires THREADS_ACCESS_TOKEN (or run `ppw auth login`)")
+				return opts, fmt.Errorf("threads syndication requires threads.legacy_access_token (or run `ppw auth login`)")
 			}
 			tokenFn = func(context.Context) (string, error) { return legacyThreadsToken, nil }
 		}

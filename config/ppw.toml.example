@@ -1,0 +1,47 @@
+[watch]
+dir = "~/ppw-inbox"
+
+[ai]
+provider = "codex"
+# corpus_path = "~/ppw-corpus/style.json"
+codex_model = "gpt-5.2"
+# codex_cli_path = "/opt/homebrew/bin/codex"
+# claude_cli_path = "/opt/homebrew/bin/claude"
+
+[r2]
+access_key_id = "REPLACE_ME"
+secret_access_key = "REPLACE_ME"
+bucket = "REPLACE_ME"
+endpoint = "https://REPLACE_ME.r2.cloudflarestorage.com"
+public_url = "https://REPLACE_ME.r2.dev"
+
+[meta]
+instagram_user_id = "REPLACE_ME"
+app_id = "REPLACE_ME"
+app_secret = "REPLACE_ME"
+page_id = "REPLACE_ME"
+# legacy_access_token = "OPTIONAL_LEGACY_ONLY"
+
+[threads]
+user_id = "REPLACE_ME"
+app_id = "REPLACE_ME"
+app_secret = "REPLACE_ME"
+# legacy_access_token = "OPTIONAL_LEGACY_ONLY"
+
+[auth]
+token_store = "~/.ppw/tokens.json"
+
+[publishing]
+destinations = ["instagram", "facebook", "threads"]
+strict_syndication = false
+
+[logging]
+runtime_log_file = "~/.ppw/ppw.log"
+job_log_dir = "~/.ppw/logs"
+success_ttl = "24h"
+failed_ttl = "720h"
+sweep_interval = "60m"
+
+[archive]
+dir = "~/ppw-archive"
+log_file = "~/ppw-archive/publish.log"

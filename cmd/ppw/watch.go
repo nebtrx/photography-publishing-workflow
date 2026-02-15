@@ -32,12 +32,21 @@ When a new directory is detected, automatically runs the scan → validate → e
 Posts will end up in pending_review state, ready for ppw review.
 Press Ctrl+C to stop watching.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if dir == "" {
-				return fmt.Errorf("--dir is required")
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
 			}
-
-			provider := providerForRun(false)
-			session, err := openCommandLogSession("watch", os.Stderr)
+			if dir == "" {
+				dir = cfg.Watch.Dir
+			}
+			if dir == "" {
+				return fmt.Errorf("--dir is required (or set watch.dir in config)")
+			}
+			if corpusPath == "" {
+				corpusPath = cfg.AI.CorpusPath
+			}
+			provider := providerForRun(cfg, false)
+			session, err := openCommandLogSession("watch", cfg, os.Stderr)
 			if err != nil {
 				return err
 			}
@@ -48,8 +57,8 @@ Press Ctrl+C to stop watching.`,
 
 			sweepCtx, stopSweep := context.WithCancel(context.Background())
 			defer stopSweep()
-			go startPeriodicLogSweep(sweepCtx, session.Writer)
-			sweepLogsNow(session.Writer)
+			go startPeriodicLogSweep(sweepCtx, cfg, session.Writer)
+			sweepLogsNow(cfg, session.Writer)
 
 			p := pipeline.New(provider, pipeline.Options{
 				CorpusPath:   corpusPath,
