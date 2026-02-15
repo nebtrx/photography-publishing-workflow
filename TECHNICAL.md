@@ -372,6 +372,78 @@ Short, factual entries for Future Omar.
 
 **Validation:**
 - `/opt/homebrew/bin/go test ./...` passed
+
+## 2026-02-15 — LazyGit-inspired TUI skin + indexed panel headers
+**Context:** Requested UI refresh to mirror LazyGit’s visual language (lavender dark theme + mint active accents) and panel numbering format.
+
+**Implemented:**
+- Updated TUI color tokens in `internal/tui/styles.go`:
+  - inactive borders -> lavender tone
+  - active borders/titles/selection -> mint accent
+  - dim/warning/error/status-bar colors adjusted for LazyGit-like contrast
+- Added indexed panel-title system in `internal/tui/app.go`:
+  - format: `[n]-Panel Name`
+  - mapping:
+    - `[0]-Detail`
+    - `[1]-Config`
+    - `[2]-Pending Review`
+    - `[3]-Publish Queue`
+    - `[4]-Published`
+    - `[5]-Runtime Log`
+- Applied indexed-title rendering to both left navigation panels and right detail/log panels.
+
+**Artifacts added:**
+- `directives/lazygit_skin_and_panel_indexing.md`
+- `directives/orchestration_lazygit_skin_and_panel_indexing.md`
+
+**Validation:**
+- `/opt/homebrew/bin/go test ./...` passed
+
+## 2026-02-15 — Header indexing rule tweak (no index on Runtime Log)
+**Context:** Runtime/command log panel is informational and not directly focus-selectable via panel cycling.
+
+**Change made:**
+- Updated `internal/tui/app.go`:
+  - `renderRuntimeLogPanel` now uses plain `Runtime Log` header (no `[n]-` prefix).
+  - Kept indexed headers on actionable/selectable panels.
+
+**Validation:**
+- `/opt/homebrew/bin/go test ./...` passed
+
+## 2026-02-15 — LazyGit chrome parity: border titles, counters, numeric jump keys
+**Context:** UI parity request expanded beyond color theme:
+- titles/numbers should be embedded in panel border line
+- list panels should show bottom-right counters (`x of y`)
+- numeric keys should jump to panels
+
+**Implemented:**
+- Replaced bordered panel rendering path in `internal/tui/app.go`:
+  - new `renderPanelChrome(...)` renders explicit top/bottom border strings
+  - top border contains title text (including `[n]-...` for selectable panels)
+  - bottom border supports right-aligned footer counters
+- Added counter helpers in `internal/tui/app.go`:
+  - `counterText(...)`
+  - `pendingCounter()`
+  - `queueCounter()`
+  - `publishedCounter()`
+- Applied counters to left list panels:
+  - pending, queue, published
+- Added numeric panel navigation in `internal/tui/app.go`:
+  - `1` -> Config
+  - `2` -> Pending Review
+  - `3` -> Publish Queue
+  - `4` -> Published
+- Kept runtime log panel unnumbered and non-selectable.
+- Added panel chrome styles in `internal/tui/styles.go`:
+  - border line styles (active/inactive)
+  - footer counter styles (active/inactive)
+
+**Artifacts added:**
+- `directives/lazygit_panel_chrome_counters_and_numeric_navigation.md`
+- `directives/orchestration_lazygit_panel_chrome_counters_and_numeric_navigation.md`
+
+**Validation:**
+- `/opt/homebrew/bin/go test ./...` passed
   - `.env.sample`
   - `README.md`
 

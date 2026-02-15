@@ -27,6 +27,13 @@ const (
 	panelCount = 4
 )
 
+const (
+	panelIndexConfig    = 1
+	panelIndexPending   = 2
+	panelIndexQueue     = 3
+	panelIndexPublished = 4
+)
+
 // Overlay identifies the current overlay state.
 type Overlay int
 
@@ -266,6 +273,27 @@ func (m AppModel) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "?":
 		m.overlay = OverlayHelp
+		return m, nil
+
+	case "1":
+		m.activePanel = PanelConfig
+		m.imgCursor = 0
+		m.statusMsg = ""
+		return m, nil
+	case "2":
+		m.activePanel = PanelPending
+		m.imgCursor = 0
+		m.statusMsg = ""
+		return m, nil
+	case "3":
+		m.activePanel = PanelQueue
+		m.imgCursor = 0
+		m.statusMsg = ""
+		return m, nil
+	case "4":
+		m.activePanel = PanelPublished
+		m.imgCursor = 0
+		m.statusMsg = ""
 		return m, nil
 	}
 
@@ -769,11 +797,10 @@ func (m AppModel) renderConfigPanel(w, h int) string {
 		lines = append(lines, dimTextStyle.Render("No config loaded"))
 	}
 
-	lines = tailLines(lines, maxInt(1, h-3))
+	lines = tailLines(lines, maxInt(1, h-2))
 	content := strings.Join(lines, "\n")
 	title := m.panelTitle("Config", PanelConfig)
-	border := m.borderForPanel(PanelConfig)
-	return renderSizedPanel(border, w, h, title+"\n"+content)
+	return renderPanelChrome(w, h, title, content, m.activePanel == PanelConfig, "")
 }
 
 func (m AppModel) renderPendingPanel(w, h int) string {
@@ -793,10 +820,9 @@ func (m AppModel) renderPendingPanel(w, h int) string {
 		lines = append(lines, line)
 	}
 
-	lines = tailLines(lines, maxInt(1, h-3))
+	lines = tailLines(lines, maxInt(1, h-2))
 	content := strings.Join(lines, "\n")
-	border := m.borderForPanel(PanelPending)
-	return renderSizedPanel(border, w, h, title+"\n"+content)
+	return renderPanelChrome(w, h, title, content, m.activePanel == PanelPending, m.pendingCounter())
 }
 
 func (m AppModel) renderQueuePanel(w, h int) string {
@@ -816,10 +842,9 @@ func (m AppModel) renderQueuePanel(w, h int) string {
 		lines = append(lines, line)
 	}
 
-	lines = tailLines(lines, maxInt(1, h-3))
+	lines = tailLines(lines, maxInt(1, h-2))
 	content := strings.Join(lines, "\n")
-	border := m.borderForPanel(PanelQueue)
-	return renderSizedPanel(border, w, h, title+"\n"+content)
+	return renderPanelChrome(w, h, title, content, m.activePanel == PanelQueue, m.queueCounter())
 }
 
 func (m AppModel) renderPublishedPanel(w, h int) string {
@@ -863,14 +888,13 @@ func (m AppModel) renderPublishedPanel(w, h int) string {
 		}
 	}
 
-	lines = tailLines(lines, maxInt(1, h-3))
+	lines = tailLines(lines, maxInt(1, h-2))
 	content := strings.Join(lines, "\n")
-	border := m.borderForPanel(PanelPublished)
-	return renderSizedPanel(border, w, h, title+"\n"+content)
+	return renderPanelChrome(w, h, title, content, m.activePanel == PanelPublished, m.publishedCounter())
 }
 
 func (m AppModel) renderDetailPanel(w, h int) string {
-	title := labelStyle.Render("Detail")
+	title := panelTitleDimStyle.Render("Detail")
 	var content string
 
 	switch m.activePanel {
@@ -884,8 +908,7 @@ func (m AppModel) renderDetailPanel(w, h int) string {
 		content = m.renderLogDetail(w)
 	}
 
-	border := activePanelBorder
-	return renderSizedPanel(border, w, h, title+"\n\n"+content)
+	return renderPanelChrome(w, h, title, content, false, "")
 }
 
 func (m AppModel) renderConfigDetail(w int) string {
@@ -1092,13 +1115,13 @@ func (m AppModel) renderRuntimeLogPanel(w, h int) string {
 	if len(m.runtimeLogs) == 0 {
 		lines = append(lines, dimTextStyle.Render("No runtime logs yet"))
 	} else {
-		for _, line := range tailLines(m.runtimeLogs, maxInt(1, h-3)) {
+		for _, line := range tailLines(m.runtimeLogs, maxInt(1, h-2)) {
 			lines = append(lines, truncate(line, maxInt(8, w-5)))
 		}
 	}
 
 	content := strings.Join(lines, "\n")
-	return renderSizedPanel(panelBorder, w, h, title+"\n"+content)
+	return renderPanelChrome(w, h, title, content, false, "")
 }
 
 func (m AppModel) renderOverlayFrame(w, h int) string {
@@ -1174,6 +1197,7 @@ func (m AppModel) renderHelpOverlay() string {
 		"",
 		dimTextStyle.Render("─── Navigation ───"),
 		"Tab / Shift-Tab    Cycle panels",
+		"1..4               Jump to panel",
 		"↑↓ / j k           Navigate items",
 		"←→ / h l           Browse images",
 		"q                  Quit",
@@ -1207,17 +1231,30 @@ func (m AppModel) renderHelpOverlay() string {
 // --- Helpers ---
 
 func (m AppModel) panelTitle(text string, panel Panel) string {
-	if m.activePanel == panel {
-		return panelTitleStyle.Render(text)
-	}
-	return panelTitleDimStyle.Render(text)
+	return m.indexedPanelTitle(m.panelIndex(panel), text, m.activePanel == panel)
 }
 
-func (m AppModel) borderForPanel(panel Panel) lipgloss.Style {
-	if m.activePanel == panel {
-		return activePanelBorder
+func (m AppModel) indexedPanelTitle(index int, text string, active bool) string {
+	value := fmt.Sprintf("[%d]-%s", index, text)
+	if active {
+		return panelTitleStyle.Render(value)
 	}
-	return panelBorder
+	return panelTitleDimStyle.Render(value)
+}
+
+func (m AppModel) panelIndex(panel Panel) int {
+	switch panel {
+	case PanelConfig:
+		return panelIndexConfig
+	case PanelPending:
+		return panelIndexPending
+	case PanelQueue:
+		return panelIndexQueue
+	case PanelPublished:
+		return panelIndexPublished
+	default:
+		return panelIndexConfig
+	}
 }
 
 func truncate(s string, max int) string {
@@ -1266,7 +1303,88 @@ func maxInt(a, b int) int {
 	return b
 }
 
-func renderSizedPanel(style lipgloss.Style, w, h int, content string) string {
-	innerH := maxInt(1, h-2) // account for top+bottom border
-	return style.Width(w).Height(innerH).Render(content)
+func renderPanelChrome(w, h int, title, content string, active bool, footer string) string {
+	if w < 6 || h < 4 {
+		return ""
+	}
+
+	borderStyle := panelBorderLineStyle
+	footerStyle := panelFooterDimStyle
+	if active {
+		borderStyle = panelBorderActiveLineStyle
+		footerStyle = panelFooterActiveStyle
+	}
+
+	innerW := w - 2
+	bodyH := h - 2
+
+	titlePrefix := borderStyle.Render("─")
+	titlePart := titlePrefix + title
+	if lipgloss.Width(titlePart) > innerW {
+		maxTitleW := maxInt(1, innerW-1)
+		title = lipgloss.NewStyle().MaxWidth(maxTitleW).Render(title)
+		titlePart = titlePrefix + title
+	}
+	topFill := innerW - lipgloss.Width(titlePart)
+	if topFill < 0 {
+		topFill = 0
+	}
+	top := borderStyle.Render("╭") + titlePart + borderStyle.Render(strings.Repeat("─", topFill)) + borderStyle.Render("╮")
+
+	bodyLines := strings.Split(content, "\n")
+	textW := maxInt(1, innerW-2)
+	rows := make([]string, 0, h)
+	rows = append(rows, top)
+	for i := 0; i < bodyH; i++ {
+		line := ""
+		if i < len(bodyLines) {
+			line = bodyLines[i]
+		}
+		text := lipgloss.NewStyle().MaxWidth(textW).Width(textW).Render(line)
+		row := borderStyle.Render("│") + " " + text + " " + borderStyle.Render("│")
+		rows = append(rows, row)
+	}
+
+	bottomInner := borderStyle.Render(strings.Repeat("─", innerW))
+	if footer != "" {
+		foot := footerStyle.Render(footer)
+		if lipgloss.Width(foot) > innerW {
+			foot = footerStyle.Render(lipgloss.NewStyle().MaxWidth(innerW).Render(footer))
+		}
+		leftFill := innerW - lipgloss.Width(foot)
+		if leftFill < 0 {
+			leftFill = 0
+		}
+		bottomInner = borderStyle.Render(strings.Repeat("─", leftFill)) + foot
+	}
+	bottom := borderStyle.Render("╰") + bottomInner + borderStyle.Render("╯")
+	rows = append(rows, bottom)
+
+	return strings.Join(rows, "\n")
+}
+
+func counterText(cursor, total int) string {
+	if total <= 0 {
+		return "0 of 0"
+	}
+	index := cursor + 1
+	if index < 1 {
+		index = 1
+	}
+	if index > total {
+		index = total
+	}
+	return fmt.Sprintf("%d of %d", index, total)
+}
+
+func (m AppModel) pendingCounter() string {
+	return counterText(m.pendingCursor, len(m.pendingPosts))
+}
+
+func (m AppModel) queueCounter() string {
+	return counterText(m.queueCursor, len(m.queuePosts))
+}
+
+func (m AppModel) publishedCounter() string {
+	return counterText(m.logCursor, m.logFlatCount())
 }
