@@ -58,12 +58,15 @@ Legacy fallback (temporary during migration):
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 
-			logOutput, closeLog, logPath, err := commandLogOutput(os.Stderr)
+			session, err := openCommandLogSession("publish", os.Stderr)
 			if err != nil {
 				return err
 			}
-			defer closeLog()
-			writeLogLine(logOutput, "[publish] Logging to %s", logPath)
+			success := false
+			defer func() { _ = session.Close(success) }()
+			sweepLogsNow(session.Writer)
+			writeLogLine(session.Writer, "[publish] Log stream: %s", session.RuntimePath)
+			writeLogLine(session.Writer, "[publish] Job log: %s", session.JobPath)
 
 			// Set up hosting
 			var host hosting.Host
@@ -87,7 +90,7 @@ Legacy fallback (temporary during migration):
 			if dryRun {
 				ig = &dryRunInstagram{}
 			} else {
-				igClient, tokenManager := buildInstagramClientWithMeta(logOutput)
+				igClient, tokenManager := buildInstagramClientWithMeta(session.Writer)
 				if igClient == nil {
 					return fmt.Errorf("Instagram client: set INSTAGRAM_USER_ID and run `ppw auth login` (or provide legacy INSTAGRAM_ACCESS_TOKEN)")
 				}
@@ -105,7 +108,7 @@ Legacy fallback (temporary during migration):
 				return fmt.Errorf("syndication options: %w", err)
 			}
 			opts.DryRun = dryRun
-			opts.LogOutput = logOutput
+			opts.LogOutput = session.Writer
 
 			pub := publisher.New(host, ig, opts)
 
@@ -127,6 +130,7 @@ Legacy fallback (temporary during migration):
 				printSyndicationSummary(os.Stdout, m)
 			}
 
+			success = true
 			return nil
 		},
 	}

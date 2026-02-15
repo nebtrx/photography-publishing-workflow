@@ -1,37 +1,90 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"photography-publishing-workflow/internal/joblog"
 )
 
 const defaultRuntimeLogRelPath = ".ppw/ppw.log"
 
-// commandLogOutput returns a writer that mirrors command logs to stderr and a
-// persistent runtime log file. The file path can be overridden with PPW_LOG_FILE.
-func commandLogOutput(base io.Writer) (io.Writer, func() error, string, error) {
-	logPath, err := runtimeLogPath()
+// CommandLogSession fans logs into terminal/TUI, runtime stream file, and one job log file.
+type CommandLogSession struct {
+	Writer      io.Writer
+	RuntimePath string
+	JobPath     string
+
+	runtimeFile *os.File
+	jobSession  *joblog.Session
+}
+
+func openCommandLogSession(module string, base io.Writer) (*CommandLogSession, error) {
+	runtimePath, err := runtimeLogPath()
 	if err != nil {
-		return base, func() error { return nil }, "", err
+		return nil, err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
-		return base, func() error { return nil }, logPath, fmt.Errorf("create runtime log directory: %w", err)
+	if err := os.MkdirAll(filepath.Dir(runtimePath), 0o700); err != nil {
+		return nil, fmt.Errorf("create runtime log directory: %w", err)
 	}
 
-	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	runtimeFile, err := os.OpenFile(runtimePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return base, func() error { return nil }, logPath, fmt.Errorf("open runtime log file: %w", err)
+		return nil, fmt.Errorf("open runtime log file: %w", err)
 	}
 
 	if base == nil {
 		base = io.Discard
 	}
+	runtimeWriter := io.MultiWriter(base, runtimeFile)
 
-	return io.MultiWriter(base, f), f.Close, logPath, nil
+	cfg := joblog.ConfigFromEnv()
+	jobSess, err := joblog.NewSession(cfg, module, "", runtimeWriter)
+	if err != nil {
+		_ = runtimeFile.Close()
+		return nil, err
+	}
+
+	return &CommandLogSession{
+		Writer:      jobSess.Writer(),
+		RuntimePath: runtimePath,
+		JobPath:     jobSess.ActivePath(),
+		runtimeFile: runtimeFile,
+		jobSession:  jobSess,
+	}, nil
+}
+
+func (s *CommandLogSession) Close(success bool) error {
+	if s == nil {
+		return nil
+	}
+	var firstErr error
+	if s.jobSession != nil {
+		if err := s.jobSession.Close(success); err != nil {
+			firstErr = err
+		} else {
+			s.JobPath = s.jobSession.FinalPath()
+		}
+	}
+	if s.runtimeFile != nil {
+		if err := s.runtimeFile.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func startPeriodicLogSweep(ctx context.Context, logOutput io.Writer) {
+	joblog.StartPeriodicSweep(ctx, joblog.ConfigFromEnv(), logOutput)
+}
+
+func sweepLogsNow(logOutput io.Writer) {
+	joblog.SweepNow(joblog.ConfigFromEnv(), logOutput)
 }
 
 func runtimeLogPath() (string, error) {

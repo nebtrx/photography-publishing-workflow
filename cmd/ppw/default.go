@@ -33,21 +33,27 @@ func runDefault() error {
 	// Build optional dependencies from config + env
 	eventCh := make(chan tea.Msg, 256)
 	eventLogWriter := tui.NewEventLogWriter(eventCh)
-	logWriter, closeLog, logPath, err := commandLogOutput(eventLogWriter)
+	session, err := openCommandLogSession("tui", eventLogWriter)
 	if err != nil {
 		eventCh <- tui.AppLogMsg{Line: fmt.Sprintf("[runtime] WARN: persistent logging disabled: %v", err)}
-		logWriter = eventLogWriter
-		closeLog = func() error { return nil }
+		session = &CommandLogSession{Writer: eventLogWriter}
 	} else {
-		eventCh <- tui.AppLogMsg{Line: fmt.Sprintf("[runtime] Logging to %s", logPath)}
+		eventCh <- tui.AppLogMsg{Line: fmt.Sprintf("[runtime] Log stream: %s", session.RuntimePath)}
+		eventCh <- tui.AppLogMsg{Line: fmt.Sprintf("[runtime] Job log: %s", session.JobPath)}
 	}
-	defer closeLog()
+	defer session.Close(false)
 
-	opts := buildAppOptions(cfg, eventCh, logWriter)
+	sweepCtx, stopSweep := context.WithCancel(context.Background())
+	defer stopSweep()
+	go startPeriodicLogSweep(sweepCtx, session.Writer)
+	sweepLogsNow(session.Writer)
+
+	opts := buildAppOptions(cfg, eventCh, session.Writer)
 
 	model := tui.NewApp(cfg, cfgErrStr, opts)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	_, runErr := p.Run()
+	_ = session.Close(runErr == nil)
 	return runErr
 }
 

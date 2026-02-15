@@ -14,6 +14,7 @@ import (
 
 	"photography-publishing-workflow/internal/hosting"
 	"photography-publishing-workflow/internal/manifest"
+	"photography-publishing-workflow/internal/obslog"
 )
 
 // InstagramAPI defines the Instagram Graph API operations needed by the publisher.
@@ -101,14 +102,44 @@ func (p *Publisher) Publish(ctx context.Context, m *manifest.Manifest, manifestP
 	}
 
 	// 2. Pre-flight: verify token
+	verifyStart := obslog.Intent(
+		p.logger,
+		"publisher",
+		m.ID,
+		m.ID,
+		"verify_instagram_token",
+		"verify instagram access token before publish",
+		nil,
+	)
 	if !p.dryRun {
 		username, err := p.ig.VerifyToken()
 		if err != nil {
+			obslog.Result(p.logger, "publisher", m.ID, m.ID, "verify_instagram_token", verifyStart, err, nil)
 			return fmt.Errorf("pre-flight token check: %w", err)
 		}
 		p.logger.Printf("Token verified for @%s", username)
+		obslog.Result(
+			p.logger,
+			"publisher",
+			m.ID,
+			m.ID,
+			"verify_instagram_token",
+			verifyStart,
+			nil,
+			map[string]any{"username": username},
+		)
 	} else {
 		p.logger.Printf("[DRY RUN] Would verify Instagram token")
+		obslog.Result(
+			p.logger,
+			"publisher",
+			m.ID,
+			m.ID,
+			"verify_instagram_token",
+			verifyStart,
+			nil,
+			map[string]any{"dry_run": true},
+		)
 	}
 
 	// 3. Upload images to R2
@@ -133,10 +164,30 @@ func (p *Publisher) Publish(ctx context.Context, m *manifest.Manifest, manifestP
 	caption := p.resolveCaption(m)
 
 	// 7. Create containers + poll + publish
+	instagramStart := obslog.Intent(
+		p.logger,
+		"publisher",
+		m.ID,
+		m.ID,
+		"publish_instagram",
+		"publish approved post to instagram feed",
+		map[string]any{"image_count": len(m.Images)},
+	)
 	if err := p.createAndPublish(ctx, m, manifestPath, caption, locationID); err != nil {
+		obslog.Result(p.logger, "publisher", m.ID, m.ID, "publish_instagram", instagramStart, err, nil)
 		p.setError(m, manifestPath, err)
 		return err
 	}
+	obslog.Result(
+		p.logger,
+		"publisher",
+		m.ID,
+		m.ID,
+		"publish_instagram",
+		instagramStart,
+		nil,
+		map[string]any{"post_id": m.Publishing.InstagramPostID, "permalink": m.Publishing.Permalink},
+	)
 
 	// 8. Story (if enabled)
 	if m.Review.StoryEnabled {
@@ -561,18 +612,47 @@ func (p *Publisher) syndicateFacebook(ctx context.Context, m *manifest.Manifest,
 		target.Status = "dry_run"
 		target.Error = ""
 		p.logger.Printf("[DRY RUN] Would syndicate to Facebook Page: mode=link_share")
+		obslog.Result(
+			p.logger,
+			"publisher",
+			m.ID,
+			m.ID,
+			"publish_facebook",
+			obslog.Intent(
+				p.logger,
+				"publisher",
+				m.ID,
+				m.ID,
+				"publish_facebook",
+				"publish instagram permalink to facebook page",
+				map[string]any{"mode": "link_share", "dry_run": true},
+			),
+			nil,
+			map[string]any{"dry_run": true},
+		)
 		return nil
 	}
+	stepStart := obslog.Intent(
+		p.logger,
+		"publisher",
+		m.ID,
+		m.ID,
+		"publish_facebook",
+		"publish instagram permalink to facebook page",
+		map[string]any{"mode": "link_share"},
+	)
 
 	if p.facebook == nil {
 		target.Status = "failed"
 		target.Error = "facebook syndication enabled but no facebook client configured"
+		obslog.Result(p.logger, "publisher", m.ID, m.ID, "publish_facebook", stepStart, fmt.Errorf("%s", target.Error), nil)
 		return fmt.Errorf("facebook syndication: %s", target.Error)
 	}
 
 	if m.Publishing.Permalink == "" {
 		target.Status = "failed"
 		target.Error = "instagram permalink missing; cannot create facebook link share"
+		obslog.Result(p.logger, "publisher", m.ID, m.ID, "publish_facebook", stepStart, fmt.Errorf("%s", target.Error), nil)
 		return fmt.Errorf("facebook syndication: %s", target.Error)
 	}
 
@@ -580,6 +660,7 @@ func (p *Publisher) syndicateFacebook(ctx context.Context, m *manifest.Manifest,
 	if err != nil {
 		target.Status = "failed"
 		target.Error = err.Error()
+		obslog.Result(p.logger, "publisher", m.ID, m.ID, "publish_facebook", stepStart, err, nil)
 		return fmt.Errorf("facebook syndication: %w", err)
 	}
 
@@ -590,6 +671,16 @@ func (p *Publisher) syndicateFacebook(ctx context.Context, m *manifest.Manifest,
 	target.Permalink = ""
 	target.Error = ""
 	p.logger.Printf("Syndicated to Facebook: post_id=%s", postID)
+	obslog.Result(
+		p.logger,
+		"publisher",
+		m.ID,
+		m.ID,
+		"publish_facebook",
+		stepStart,
+		nil,
+		map[string]any{"status": "published", "post_id": postID},
+	)
 	return nil
 }
 
@@ -616,12 +707,40 @@ func (p *Publisher) syndicateThreads(ctx context.Context, m *manifest.Manifest, 
 		target.Status = "dry_run"
 		target.Error = ""
 		p.logger.Printf("[DRY RUN] Would syndicate to Threads: mode=text_link")
+		obslog.Result(
+			p.logger,
+			"publisher",
+			m.ID,
+			m.ID,
+			"publish_threads",
+			obslog.Intent(
+				p.logger,
+				"publisher",
+				m.ID,
+				m.ID,
+				"publish_threads",
+				"publish text+permalink to threads",
+				map[string]any{"mode": "text_link", "dry_run": true},
+			),
+			nil,
+			map[string]any{"dry_run": true},
+		)
 		return nil
 	}
+	stepStart := obslog.Intent(
+		p.logger,
+		"publisher",
+		m.ID,
+		m.ID,
+		"publish_threads",
+		"publish text+permalink to threads",
+		map[string]any{"mode": "text_link"},
+	)
 
 	if p.threads == nil {
 		target.Status = "failed"
 		target.Error = "threads syndication enabled but no threads client configured"
+		obslog.Result(p.logger, "publisher", m.ID, m.ID, "publish_threads", stepStart, fmt.Errorf("%s", target.Error), nil)
 		return fmt.Errorf("threads syndication: %s", target.Error)
 	}
 
@@ -635,6 +754,7 @@ func (p *Publisher) syndicateThreads(ctx context.Context, m *manifest.Manifest, 
 	if text == "" {
 		target.Status = "failed"
 		target.Error = "caption/permalink both empty; cannot publish to threads"
+		obslog.Result(p.logger, "publisher", m.ID, m.ID, "publish_threads", stepStart, fmt.Errorf("%s", target.Error), nil)
 		return fmt.Errorf("threads syndication: %s", target.Error)
 	}
 
@@ -642,6 +762,7 @@ func (p *Publisher) syndicateThreads(ctx context.Context, m *manifest.Manifest, 
 	if err != nil {
 		target.Status = "failed"
 		target.Error = err.Error()
+		obslog.Result(p.logger, "publisher", m.ID, m.ID, "publish_threads", stepStart, err, nil)
 		return fmt.Errorf("threads syndication: %w", err)
 	}
 
@@ -652,5 +773,15 @@ func (p *Publisher) syndicateThreads(ctx context.Context, m *manifest.Manifest, 
 	target.Permalink = permalink
 	target.Error = ""
 	p.logger.Printf("Syndicated to Threads: post_id=%s", postID)
+	obslog.Result(
+		p.logger,
+		"publisher",
+		m.ID,
+		m.ID,
+		"publish_threads",
+		stepStart,
+		nil,
+		map[string]any{"status": "published", "post_id": postID, "permalink": permalink},
+	)
 	return nil
 }

@@ -37,32 +37,39 @@ Press Ctrl+C to stop watching.`,
 			}
 
 			provider := providerForRun(false)
-			logOutput, closeLog, logPath, err := commandLogOutput(os.Stderr)
+			session, err := openCommandLogSession("watch", os.Stderr)
 			if err != nil {
 				return err
 			}
-			defer closeLog()
-			writeLogLine(logOutput, "[watcher] Logging to %s", logPath)
+			success := false
+			defer func() { _ = session.Close(success) }()
+			writeLogLine(session.Writer, "[watcher] Log stream: %s", session.RuntimePath)
+			writeLogLine(session.Writer, "[watcher] Job log: %s", session.JobPath)
+
+			sweepCtx, stopSweep := context.WithCancel(context.Background())
+			defer stopSweep()
+			go startPeriodicLogSweep(sweepCtx, session.Writer)
+			sweepLogsNow(session.Writer)
 
 			p := pipeline.New(provider, pipeline.Options{
 				CorpusPath:   corpusPath,
 				SkipLocation: skipLocation,
 				SkipMusic:    skipMusic,
-				LogOutput:    logOutput,
+				LogOutput:    session.Writer,
 			})
 
 			handler := func(ctx context.Context, postDir string) {
 				result := p.Run(ctx, postDir)
 				if result.Error != nil {
-					writeLogLine(logOutput, "[pipeline] ERROR %s: %v", result.PostID, result.Error)
+					writeLogLine(session.Writer, "[pipeline] ERROR %s: %v", result.PostID, result.Error)
 				} else {
-					writeLogLine(logOutput, "[pipeline] complete: %s -> %s", result.PostID, result.FinalState)
+					writeLogLine(session.Writer, "[pipeline] complete: %s -> %s", result.PostID, result.FinalState)
 				}
 			}
 
 			w, err := watcher.New(dir, handler, watcher.Options{
 				Debounce:  debounce,
-				LogOutput: logOutput,
+				LogOutput: session.Writer,
 			})
 			if err != nil {
 				return fmt.Errorf("create watcher: %w", err)
@@ -81,7 +88,9 @@ Press Ctrl+C to stop watching.`,
 			}()
 
 			fmt.Printf("Watching %s for new posts (Ctrl+C to stop)\n", dir)
-			return w.Watch(ctx)
+			err = w.Watch(ctx)
+			success = err == nil
+			return err
 		},
 	}
 

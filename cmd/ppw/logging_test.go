@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,45 +18,37 @@ func TestRuntimeLogPath_Default(t *testing.T) {
 	}
 }
 
-func TestRuntimeLogPath_Override(t *testing.T) {
-	t.Setenv("PPW_LOG_FILE", "~/custom.log")
-	path, err := runtimeLogPath()
+func TestOpenCommandLogSession_WritesAndFinalizesJobLog(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("PPW_LOG_FILE", filepath.Join(base, "runtime.log"))
+	t.Setenv("PPW_LOG_DIR", filepath.Join(base, "logs"))
+
+	session, err := openCommandLogSession("pipeline", nil)
 	if err != nil {
-		t.Fatalf("runtimeLogPath: %v", err)
+		t.Fatalf("openCommandLogSession: %v", err)
 	}
-	if !strings.HasSuffix(path, string(filepath.Separator)+"custom.log") {
-		t.Fatalf("runtimeLogPath override = %q, want suffix custom.log", path)
+
+	writeLogLine(session.Writer, "hello %s", "world")
+	if err := session.Close(true); err != nil {
+		t.Fatalf("session close: %v", err)
 	}
-}
 
-func TestCommandLogOutput_WritesBaseAndFile(t *testing.T) {
-	logPath := filepath.Join(t.TempDir(), "ppw.log")
-	t.Setenv("PPW_LOG_FILE", logPath)
-
-	var base bytes.Buffer
-	w, closeFn, resolved, err := commandLogOutput(&base)
+	runtimeData, err := os.ReadFile(filepath.Join(base, "runtime.log"))
 	if err != nil {
-		t.Fatalf("commandLogOutput: %v", err)
+		t.Fatalf("read runtime file: %v", err)
+	}
+	if !strings.Contains(string(runtimeData), "hello world") {
+		t.Fatalf("runtime missing log line: %q", string(runtimeData))
 	}
 
-	if resolved != logPath {
-		t.Fatalf("resolved path = %q, want %q", resolved, logPath)
+	if !strings.Contains(filepath.Base(session.JobPath), ".success.") {
+		t.Fatalf("finalized job path missing status: %q", session.JobPath)
 	}
-
-	writeLogLine(w, "hello %s", "world")
-	if err := closeFn(); err != nil {
-		t.Fatalf("close log file: %v", err)
-	}
-
-	if !strings.Contains(base.String(), "hello world") {
-		t.Fatalf("base output missing line, got %q", base.String())
-	}
-
-	data, err := os.ReadFile(logPath)
+	jobData, err := os.ReadFile(session.JobPath)
 	if err != nil {
-		t.Fatalf("read log file: %v", err)
+		t.Fatalf("read job file: %v", err)
 	}
-	if !strings.Contains(string(data), "hello world") {
-		t.Fatalf("file output missing line, got %q", string(data))
+	if !strings.Contains(string(jobData), "hello world") {
+		t.Fatalf("job log missing line: %q", string(jobData))
 	}
 }

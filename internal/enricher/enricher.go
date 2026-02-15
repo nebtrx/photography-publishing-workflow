@@ -15,6 +15,7 @@ import (
 
 	"photography-publishing-workflow/internal/ai"
 	"photography-publishing-workflow/internal/manifest"
+	"photography-publishing-workflow/internal/obslog"
 )
 
 // Options controls which enrichment components to run.
@@ -60,30 +61,99 @@ func (e *Enricher) Enrich(ctx context.Context, m *manifest.Manifest) error {
 	enrichment := &manifest.Enrichment{}
 
 	// 1. Caption generation (always runs)
+	captionStep := obslog.Intent(
+		e.logger,
+		"enricher",
+		m.ID,
+		m.ID,
+		"extract_caption",
+		"extract description/caption from hero image with AI",
+		map[string]any{"image_count": len(m.Images), "provider": e.providerName()},
+	)
 	caption, err := e.generateCaption(ctx, m, hero)
 	if err != nil {
+		obslog.Result(e.logger, "enricher", m.ID, m.ID, "extract_caption", captionStep, err, nil)
 		e.logger.Printf("WARN: caption generation failed: %v", err)
 	} else {
 		enrichment.Caption = caption
+		obslog.Result(
+			e.logger,
+			"enricher",
+			m.ID,
+			m.ID,
+			"extract_caption",
+			captionStep,
+			nil,
+			map[string]any{
+				"caption_preview": previewText(caption.Text, 160),
+				"hashtag_count":   caption.HashtagCount,
+			},
+		)
 	}
 
 	// 2. Location identification (unless skipped)
 	if !e.opts.SkipLocation {
+		locationStep := obslog.Intent(
+			e.logger,
+			"enricher",
+			m.ID,
+			m.ID,
+			"extract_location",
+			"identify location from hero image with AI/GPS fallback",
+			map[string]any{"provider": e.providerName()},
+		)
 		loc, err := e.identifyLocation(ctx, m, hero)
 		if err != nil {
+			obslog.Result(e.logger, "enricher", m.ID, m.ID, "extract_location", locationStep, err, nil)
 			e.logger.Printf("WARN: location identification failed: %v", err)
 		} else {
 			enrichment.Location = loc
+			details := map[string]any{"location_found": loc != nil}
+			if loc != nil {
+				details["location_name"] = loc.Name
+				details["source"] = loc.Source
+				details["confidence"] = loc.Confidence
+			}
+			obslog.Result(
+				e.logger,
+				"enricher",
+				m.ID,
+				m.ID,
+				"extract_location",
+				locationStep,
+				nil,
+				details,
+			)
 		}
 	}
 
 	// 3. Music suggestion (unless skipped)
 	if !e.opts.SkipMusic {
+		musicStep := obslog.Intent(
+			e.logger,
+			"enricher",
+			m.ID,
+			m.ID,
+			"extract_music",
+			"suggest matching music based on hero image and context",
+			map[string]any{"provider": e.providerName()},
+		)
 		music, err := e.suggestMusic(ctx, m, hero, enrichment.Location)
 		if err != nil {
+			obslog.Result(e.logger, "enricher", m.ID, m.ID, "extract_music", musicStep, err, nil)
 			e.logger.Printf("WARN: music suggestion failed: %v", err)
 		} else {
 			enrichment.MusicSuggestion = music
+			obslog.Result(
+				e.logger,
+				"enricher",
+				m.ID,
+				m.ID,
+				"extract_music",
+				musicStep,
+				nil,
+				map[string]any{"artist": music.Artist, "title": music.Title, "mood": music.Mood},
+			)
 		}
 	}
 
@@ -101,6 +171,24 @@ func heroImage(m *manifest.Manifest) *manifest.Image {
 		return &m.Images[0]
 	}
 	return nil
+}
+
+func (e *Enricher) providerName() string {
+	if e.provider == nil {
+		return ""
+	}
+	return e.provider.Name()
+}
+
+func previewText(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= max {
+		return s
+	}
+	if max < 4 {
+		max = 4
+	}
+	return s[:max-3] + "..."
 }
 
 // --- Caption Generation ---

@@ -665,3 +665,56 @@ Store value indicated `meta.user_expires_at` was written near current time.
 
 **Operational note:**
 - `make build` can still fail if shell resolves old Go (`/usr/local/bin/go` 1.13.x). Use `/opt/homebrew/bin/go` path or ensure Homebrew Go is first in `PATH`.
+
+## 2026-02-15 — Structured per-job logging + retention sweeper (60m default)
+**Context:** Needed verbose, consistent logs with intent/result semantics and automatic disposal of old logs, while preserving runtime visibility in TUI/CLI.
+
+**Directive/orchestration artifacts:**
+- `directives/structured_job_logging_and_retention.md`
+- `directives/orchestration_structured_job_logging_and_retention.md`
+
+**Implemented:**
+- New structured-event helper package:
+  - `internal/obslog/obslog.go`
+  - Event schema includes: timestamp, module, job_id, post_id, action, type(intent/result), outcome(success/failure), duration_ms, error, details.
+- New per-job log session + retention package:
+  - `internal/joblog/joblog.go`
+  - Job file lifecycle:
+    - active: `<job_id>.active.jsonl`
+    - finalized: `<job_id>.success.<unix>.jsonl` or `<job_id>.failed.<unix>.jsonl`
+  - Retention sweeping supports separate TTL for success vs failure.
+  - Periodic sweep runner added.
+- Command logging/session wiring refactor in `cmd/ppw/logging.go`:
+  - `openCommandLogSession(module, baseWriter)`
+  - fan-out to: base output + runtime stream log + per-job log file
+  - one-shot sweep hook + periodic sweep helper
+- Entry-point integration:
+  - `cmd/ppw/default.go` (TUI): starts periodic log sweep and writes logs to job file + runtime stream.
+  - `cmd/ppw/watch.go`: starts periodic log sweep; watcher/pipeline logs write to session writer.
+  - `cmd/ppw/pipeline.go`, `cmd/ppw/publish.go`: one-shot sweep on startup and per-run job session finalization.
+- Structured instrumentation added for key actions:
+  - `internal/pipeline/pipeline.go`:
+    - scan / validate / enrich intent+result events
+  - `internal/enricher/enricher.go`:
+    - extract_caption / extract_location / extract_music intent+result events
+    - includes success payload previews and failure details
+  - `internal/publisher/publisher.go`:
+    - verify_instagram_token / publish_instagram / publish_facebook / publish_threads intent+result events
+
+**Retention defaults added:**
+- `.env.sample`
+  - `PPW_LOG_DIR=~/.ppw/logs`
+  - `PPW_LOG_SUCCESS_TTL=24h`
+  - `PPW_LOG_FAILED_TTL=720h`
+  - `PPW_LOG_SWEEP_INTERVAL=60m`
+- `.env`
+  - same defaults exported
+
+**Tests added:**
+- `internal/joblog/joblog_test.go`
+- `internal/obslog/obslog_test.go`
+- `cmd/ppw/logging_test.go` updated for new session/finalization behavior
+
+**Validation:**
+- `/opt/homebrew/bin/go test ./...` passed
+- `/opt/homebrew/bin/go build -o bin/ppw ./cmd/ppw` passed

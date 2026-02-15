@@ -35,19 +35,22 @@ After running, the manifest will be in pending_review state, ready for ppw revie
 
 			provider := providerForRun(dryRun)
 
-			logOutput, closeLog, logPath, err := commandLogOutput(os.Stderr)
+			session, err := openCommandLogSession("pipeline", os.Stderr)
 			if err != nil {
 				return err
 			}
-			defer closeLog()
-			writeLogLine(logOutput, "[pipeline] Logging to %s", logPath)
+			success := false
+			defer func() { _ = session.Close(success) }()
+			sweepLogsNow(session.Writer)
+			writeLogLine(session.Writer, "[pipeline] Log stream: %s", session.RuntimePath)
+			writeLogLine(session.Writer, "[pipeline] Job log: %s", session.JobPath)
 
 			p := pipeline.New(provider, pipeline.Options{
 				CorpusPath:   corpusPath,
 				SkipLocation: skipLocation,
 				SkipMusic:    skipMusic,
 				DryRun:       dryRun,
-				LogOutput:    logOutput,
+				LogOutput:    session.Writer,
 			})
 
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -63,6 +66,7 @@ After running, the manifest will be in pending_review state, ready for ppw revie
 				fmt.Printf("Manifest: %s\n", result.ManifestPath)
 			}
 
+			success = true
 			return nil
 		},
 	}
