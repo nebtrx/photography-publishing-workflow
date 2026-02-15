@@ -14,7 +14,7 @@ import (
 func metaCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "meta",
-		Short: "Meta platform utilities",
+		Short: "Meta platform utilities (legacy)",
 	}
 	cmd.AddCommand(metaAuthCmd())
 	return cmd
@@ -22,8 +22,9 @@ func metaCmd() *cobra.Command {
 
 func metaAuthCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "auth",
-		Short: "Meta auth token management",
+		Use:        "auth",
+		Short:      "Meta auth token management (deprecated)",
+		Deprecated: "use `ppw auth login` and `ppw auth status`; `ppw meta auth` will be removed in a future release",
 	}
 	cmd.AddCommand(metaAuthDoctorCmd())
 	cmd.AddCommand(metaAuthExchangeCmd())
@@ -44,6 +45,7 @@ Requires environment variables:
 
 Never prints full tokens.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			printMetaAuthDeprecationWarning()
 			cfg := buildMetaConfig()
 			if cfg.UserToken == "" {
 				return fmt.Errorf("INSTAGRAM_ACCESS_TOKEN is required")
@@ -71,6 +73,7 @@ Requires: META_APP_ID, META_APP_SECRET, INSTAGRAM_ACCESS_TOKEN
 
 After exchange, update your .env file with the new token.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			printMetaAuthDeprecationWarning()
 			cfg := buildMetaConfig()
 			tm := meta.NewTokenManager(cfg)
 
@@ -174,6 +177,11 @@ func printDoctorReport(r meta.DoctorReport) {
 	} else {
 		fmt.Println("Some checks failed. Review the output above.")
 	}
+	fmt.Println("Migration: use `ppw auth login` for managed token storage/refresh.")
+}
+
+func printMetaAuthDeprecationWarning() {
+	fmt.Fprintln(os.Stderr, "Warning: `ppw meta auth ...` is deprecated. Use `ppw auth login|status|logout`.")
 }
 
 // joinMax joins up to n strings with ", " and adds "+N more" if truncated.

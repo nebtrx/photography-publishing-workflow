@@ -106,27 +106,26 @@ func (c *FacebookLinkClient) PublishLink(ctx context.Context, message, link stri
 
 // ThreadsClient publishes text to Threads via container + publish flow.
 type ThreadsClient struct {
-	UserID      string
-	AccessToken string
-	HTTPClient  *http.Client
-	APIBase     string
+	UserID     string
+	TokenFn    AccessTokenSource
+	HTTPClient *http.Client
+	APIBase    string
 }
 
 // NewThreadsClient creates a Threads API client.
-func NewThreadsClient(userID, accessToken string) (*ThreadsClient, error) {
+func NewThreadsClient(userID string, tokenFn AccessTokenSource) (*ThreadsClient, error) {
 	userID = strings.TrimSpace(userID)
-	accessToken = strings.TrimSpace(accessToken)
 	if userID == "" {
 		return nil, fmt.Errorf("threads user ID is required")
 	}
-	if accessToken == "" {
-		return nil, fmt.Errorf("threads access token is required")
+	if tokenFn == nil {
+		return nil, fmt.Errorf("threads token source is required")
 	}
 	return &ThreadsClient{
-		UserID:      userID,
-		AccessToken: accessToken,
-		HTTPClient:  &http.Client{Timeout: 30 * time.Second},
-		APIBase:     threadsGraphBase,
+		UserID:     userID,
+		TokenFn:    tokenFn,
+		HTTPClient: &http.Client{Timeout: 30 * time.Second},
+		APIBase:    threadsGraphBase,
 	}, nil
 }
 
@@ -137,25 +136,34 @@ func (c *ThreadsClient) PublishText(ctx context.Context, text string) (string, s
 		return "", "", fmt.Errorf("threads text is required")
 	}
 
-	containerID, err := c.createTextContainer(ctx, text)
+	token, err := c.TokenFn(ctx)
+	if err != nil {
+		return "", "", fmt.Errorf("get threads token: %w", err)
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", "", fmt.Errorf("empty threads token")
+	}
+
+	containerID, err := c.createTextContainer(ctx, text, token)
 	if err != nil {
 		return "", "", err
 	}
 
-	postID, err := c.publishContainer(ctx, containerID)
+	postID, err := c.publishContainer(ctx, containerID, token)
 	if err != nil {
 		return "", "", err
 	}
 
-	permalink, _ := c.getPermalink(ctx, postID) // best-effort
+	permalink, _ := c.getPermalink(ctx, postID, token) // best-effort
 	return postID, permalink, nil
 }
 
-func (c *ThreadsClient) createTextContainer(ctx context.Context, text string) (string, error) {
+func (c *ThreadsClient) createTextContainer(ctx context.Context, text, token string) (string, error) {
 	params := url.Values{
 		"media_type":   {"TEXT"},
 		"text":         {text},
-		"access_token": {c.AccessToken},
+		"access_token": {token},
 	}
 	u := strings.TrimRight(c.APIBase, "/") + "/" + url.PathEscape(c.UserID) + "/threads"
 	body, status, err := c.postForm(ctx, u, params)
@@ -178,10 +186,10 @@ func (c *ThreadsClient) createTextContainer(ctx context.Context, text string) (s
 	return out.ID, nil
 }
 
-func (c *ThreadsClient) publishContainer(ctx context.Context, containerID string) (string, error) {
+func (c *ThreadsClient) publishContainer(ctx context.Context, containerID, token string) (string, error) {
 	params := url.Values{
 		"creation_id":  {containerID},
-		"access_token": {c.AccessToken},
+		"access_token": {token},
 	}
 	u := strings.TrimRight(c.APIBase, "/") + "/" + url.PathEscape(c.UserID) + "/threads_publish"
 	body, status, err := c.postForm(ctx, u, params)
@@ -204,11 +212,11 @@ func (c *ThreadsClient) publishContainer(ctx context.Context, containerID string
 	return out.ID, nil
 }
 
-func (c *ThreadsClient) getPermalink(ctx context.Context, postID string) (string, error) {
+func (c *ThreadsClient) getPermalink(ctx context.Context, postID, token string) (string, error) {
 	u := fmt.Sprintf("%s/%s?fields=permalink&access_token=%s",
 		strings.TrimRight(c.APIBase, "/"),
 		url.PathEscape(postID),
-		url.QueryEscape(c.AccessToken),
+		url.QueryEscape(token),
 	)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {

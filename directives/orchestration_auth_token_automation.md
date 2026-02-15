@@ -148,8 +148,8 @@ Coordinate implementation of `directives/auth_token_automation.md` into parallel
 
 - [x] Confirm workstream owners and sequence
 - [x] Implement WS1 with tests first
-- [ ] Implement WS2 and WS3 against WS1 contracts
-- [ ] Integrate WS4 and validate publish in CLI/TUI
+- [x] Implement WS2 and WS3 against WS1 contracts
+- [x] Integrate WS4 and validate publish in CLI/TUI
 - [ ] Complete WS5 migration behavior and docs
 - [ ] Run WS6 full verification and capture outputs in TECHNICAL log
 
@@ -167,3 +167,26 @@ Coordinate implementation of `directives/auth_token_automation.md` into parallel
   - Validation:
     - `go test ./internal/authstore` passed
     - `go test ./...` passed
+
+- 2026-02-15:
+  - WS2 completed.
+    - Added unified auth command set:
+      - `ppw auth login`
+      - `ppw auth status`
+      - `ppw auth logout --yes`
+    - Implemented loopback OAuth callback handling (`127.0.0.1:8787` default), browser-open flow, and manual code fallback flags.
+    - Added shared auth manager wiring helper in `cmd/ppw/auth_common.go`.
+  - WS3 completed.
+    - Added automated lifecycle test coverage for `internal/authn`:
+      - auth URL generation
+      - Meta code exchange and long-lived token persistence
+      - Threads refresh path with persisted store update
+      - empty-store status behavior
+  - WS4 integration completed.
+    - CLI/TUI publishing now prefer store-backed managed auth via `internal/authn.Manager`.
+    - Threads syndication client migrated from static token string to dynamic token source.
+    - Facebook/Threads syndication paths include legacy env-token fallback during migration.
+  - Compatibility updates:
+    - Added deprecation marker for `ppw meta auth` with migration message to `ppw auth`.
+  - Validation:
+    - `/opt/homebrew/bin/go test ./...` passed

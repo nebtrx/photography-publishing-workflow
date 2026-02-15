@@ -7,9 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"photography-publishing-workflow/internal/authn"
 	"photography-publishing-workflow/internal/hosting"
 	"photography-publishing-workflow/internal/manifest"
-	"photography-publishing-workflow/internal/meta"
 	"photography-publishing-workflow/internal/publisher"
 )
 
@@ -29,16 +29,20 @@ func publishCmd() *cobra.Command {
 publish the post (and optionally story), and record the result.
 
 Requires environment variables:
-  INSTAGRAM_USER_ID, INSTAGRAM_ACCESS_TOKEN
+  INSTAGRAM_USER_ID
   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET, R2_ENDPOINT, R2_PUBLIC_URL
 
-Optional (for managed auth with Page token):
+Recommended managed auth:
   META_APP_ID, META_APP_SECRET, META_PAGE_ID
+  (run "ppw auth login" once to persist tokens)
 
 Optional (for syndication):
   PUBLISH_DESTINATIONS (instagram,facebook,threads)
   STRICT_SYNDICATION
-  THREADS_USER_ID, THREADS_ACCESS_TOKEN`,
+  THREADS_USER_ID
+
+Legacy fallback (temporary during migration):
+  INSTAGRAM_ACCESS_TOKEN, THREADS_ACCESS_TOKEN`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if manifestPath == "" {
 				return fmt.Errorf("--manifest is required")
@@ -70,16 +74,16 @@ Optional (for syndication):
 
 			// Set up Instagram client
 			var ig publisher.InstagramAPI
-			var tm *meta.TokenManager
+			var authMgr *authn.Manager
 			if dryRun {
 				ig = &dryRunInstagram{}
 			} else {
 				igClient, tokenManager := buildInstagramClientWithMeta()
 				if igClient == nil {
-					return fmt.Errorf("Instagram client: INSTAGRAM_USER_ID and INSTAGRAM_ACCESS_TOKEN are required")
+					return fmt.Errorf("Instagram client: set INSTAGRAM_USER_ID and run `ppw auth login` (or provide legacy INSTAGRAM_ACCESS_TOKEN)")
 				}
 				ig = igClient
-				tm = tokenManager
+				authMgr = tokenManager
 			}
 
 			enableFacebook, enableThreads, err := parseDestinations(destinations)
@@ -87,7 +91,7 @@ Optional (for syndication):
 				return err
 			}
 
-			opts, err := buildSyndicationOptions(ctx, tm, enableFacebook, enableThreads, strictSyn, dryRun)
+			opts, err := buildSyndicationOptions(ctx, authMgr, enableFacebook, enableThreads, strictSyn, dryRun)
 			if err != nil {
 				return fmt.Errorf("syndication options: %w", err)
 			}

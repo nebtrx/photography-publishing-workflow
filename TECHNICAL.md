@@ -213,3 +213,191 @@ Short, factual entries for Future Omar.
 **Files updated:**
 - `.env.sample`
 - `.env`
+
+## 2026-02-15 — Automated auth lifecycle execution: WS2/WS3 + runtime wiring
+**Context:** Continue auth automation after WS1 with OAuth login UX, refresh validation, and runtime integration for CLI/TUI publishing.
+
+**Implemented:**
+- New unified auth commands in `cmd/ppw/auth.go`:
+  - `ppw auth login`
+  - `ppw auth status`
+  - `ppw auth logout --yes`
+- Added OAuth callback flow:
+  - loopback callback server (default `127.0.0.1:8787`)
+  - provider-specific callback paths for Meta and Threads
+  - browser-open helper with `--no-browser` fallback
+  - manual-code fallback flags (`--meta-code`, `--threads-code`, with corresponding redirect URI flags)
+- Added shared auth manager constructor in `cmd/ppw/auth_common.go`.
+
+**Runtime integration changes:**
+- `cmd/ppw/default.go`:
+  - publisher path now prefers managed store-backed tokens via `internal/authn.Manager`.
+  - falls back to legacy static `INSTAGRAM_ACCESS_TOKEN` only when managed auth is unavailable.
+- `cmd/ppw/publish.go`:
+  - publish path now consumes `*authn.Manager` for syndication wiring.
+  - updated command help text for managed-auth-first behavior.
+- `cmd/ppw/syndication.go`:
+  - Facebook and Threads token sources now support managed auth from token store.
+  - kept explicit legacy env-token fallback to preserve compatibility during migration.
+- `internal/publisher/syndication_clients.go`:
+  - `ThreadsClient` migrated from static token field to dynamic token source (`AccessTokenSource`) for refreshable auth.
+
+**Compatibility/deprecation:**
+- `cmd/ppw/meta.go` now marks `ppw meta auth` as deprecated and points users to `ppw auth`.
+
+**Tests added:**
+- `internal/authn/manager_test.go`:
+  - auth URL generation
+  - Meta login exchange + page token derivation persistence
+  - Threads refresh update path
+  - missing-store status behavior
+- `internal/publisher/syndication_clients_test.go`:
+  - Threads token-source requirements and publish flow with dynamic token source
+
+**Validation:**
+- `/opt/homebrew/bin/go test ./...` passed
+- `/opt/homebrew/bin/go run ./cmd/ppw --help` shows new `auth` command tree
+
+## 2026-02-15 — OAuth secure-redirect compatibility fix (localhost vs 127.0.0.1)
+**Context:** `ppw auth login` hit Meta login blocker: “isn't using a secure connection.” The auth flow used loopback IP redirect URIs.
+
+**Change made:**
+- Updated auth login default listen address in `cmd/ppw/auth.go`:
+  - from `127.0.0.1:8787`
+  - to `localhost:8787`
+- Hardened callback URL normalization in `cmd/ppw/auth.go`:
+  - converts loopback IP redirect hosts (`127.0.0.1`, `0.0.0.0`, `::1`) to `localhost` for OAuth redirect URI generation
+  - preserves local callback behavior
+
+**Rationale:**
+- Meta OAuth dev flows commonly accept `localhost` redirect URIs while plain IP-based HTTP redirect URIs may be rejected by secure-transport checks.
+
+**Validation:**
+- `/opt/homebrew/bin/go test ./...` passed
+
+## 2026-02-15 — Threads auth app-identity compatibility (error_code 4476002)
+**Context:** Unified `ppw auth login` could fail on the Threads leg after successful Meta auth with:
+`Authorization Failed: No app ID was sent with the request. (error_code 4476002)`.
+
+**Likely cause addressed:**
+- Threads OAuth may be configured under a different Meta app than the Instagram/Facebook app. Previous implementation always reused `META_APP_ID/META_APP_SECRET` for Threads exchanges.
+
+**Changes made:**
+- Added optional Threads app credential overrides:
+  - `THREADS_APP_ID`
+  - `THREADS_APP_SECRET`
+- Updated auth manager wiring in `cmd/ppw/auth_common.go` to pass these env vars.
+- Updated `internal/authn/manager.go` Threads paths to use override credentials when provided:
+  - `ThreadsAuthURL`
+  - `exchangeThreadsCode`
+  - `exchangeThreadsLongLived`
+- Kept backward compatibility:
+  - if overrides are unset, Threads continues to use `META_APP_ID/META_APP_SECRET`.
+- Updated docs:
+  - `.env.sample`
+  - `README.md`
+
+**Tests added:**
+- `internal/authn/manager_test.go`
+  - verifies Threads auth URL uses `THREADS_APP_ID`
+  - verifies Threads code exchange uses `THREADS_APP_ID/THREADS_APP_SECRET`
+
+**Validation:**
+- `/opt/homebrew/bin/go test ./...` passed
+
+## 2026-02-15 — Meta token expiry fallback fix after OAuth login
+**Context:** After successful `ppw auth login --meta-only`, status showed:
+`expires=<today> (0 days) EXPIRING`.
+Store value indicated `meta.user_expires_at` was written near current time.
+
+**Root cause:**
+- Auth lifecycle code relied on `expires_in` from OAuth token exchange responses.
+- When `expires_in` is missing or zero in a Meta response, code wrote `now + 0s`, causing false-expiring status.
+
+**Fix implemented:**
+- In `internal/authn/manager.go`:
+  - Added `expiryFromExpiresIn()` helper (returns zero-time when `expires_in <= 0`).
+  - Added `lookupMetaTokenExpiryBestEffort()` fallback using `debug_token.expires_at`.
+  - Applied fallback in both:
+    - `exchangeMetaCode()`
+    - `exchangeMetaLongLived()`
+  - Threads exchange/refresh paths now also avoid writing `now` when `expires_in` is missing (store `expires_at` as unknown instead).
+- In `cmd/ppw/auth.go`:
+  - Updated `auth status` output formatting:
+    - unknown expiry now prints `expires=unknown` (no misleading `(0 days)`).
+
+**Tests added:**
+- `internal/authn/manager_test.go`:
+  - `TestLoginMeta_FallsBackToDebugTokenExpiryWhenExpiresInMissing`
+
+**Validation:**
+- `/opt/homebrew/bin/go test ./...` passed
+
+## 2026-02-15 — Auth env normalization hardening (quoted app IDs/secrets)
+**Context:** Threads OAuth can fail with app-identity errors when env values are copied with wrapping quotes (e.g. `"896099..."`), producing malformed `client_id` values at runtime.
+
+**Changes made:**
+- Updated `cmd/ppw/auth_common.go`:
+  - Added `normalizeEnvSecretLike()` helper that trims whitespace and wrapping single/double quotes.
+  - Applied normalization to:
+    - `META_APP_ID`
+    - `META_APP_SECRET`
+    - `META_PAGE_ID`
+    - `THREADS_APP_ID`
+    - `THREADS_APP_SECRET`
+
+**Rationale:**
+- Prevents subtle OAuth failures from quoted env values in shell/export workflows.
+
+**Validation:**
+- `/opt/homebrew/bin/go test ./...` passed
+
+## 2026-02-15 — Threads OAuth base-domain compatibility update
+**Context:** Threads authorization URL showed valid `client_id`, but user still got app-identity error during Threads OAuth.
+
+**Change made:**
+- Updated default Threads auth base in `internal/authn/manager.go`:
+  - from `https://www.threads.net`
+  - to `https://threads.net`
+
+**Rationale:**
+- Threads OAuth endpoint behavior can vary across domain aliases; canonical non-`www` base improves compatibility when app recognition fails despite valid `client_id` query parameter.
+
+**Validation:**
+- `/opt/homebrew/bin/go test ./...` passed
+
+## 2026-02-15 — Auth login redirect-URI override fix for browser flow
+**Context:** `ppw auth login --threads-only` ignored `--threads-redirect-uri` unless `--threads-code` was also provided, preventing HTTPS callback URI workflows required by Threads settings.
+
+**Fix made:**
+- Updated `cmd/ppw/auth.go`:
+  - For both Meta and Threads login flows, if `--*-redirect-uri` is provided and `--*-code` is not, browser auth now uses that redirect URI instead of forcing generated localhost callback URL.
+
+**Impact:**
+- Enables tunnel/domain-based HTTPS callback flows (e.g. ngrok) while still using local callback listener.
+- Unblocks Threads setup where `http://localhost` redirect cannot be saved in app settings.
+
+**Validation:**
+- `/opt/homebrew/bin/go test ./...` passed
+
+## 2026-02-15 — Managed auth refresh command + env cleanup for token-store mode
+**Context:** After successful login, users may need to refresh stored tokens without browser auth and want `.env` reduced to active managed-auth variables.
+
+**Implemented:**
+- Added new command in `cmd/ppw/auth.go`:
+  - `ppw auth refresh`
+  - Supports `--meta-only` and `--threads-only`
+  - Triggers lifecycle refresh using stored tokens and then prints `auth status`
+- Updated docs:
+  - `README.md` now includes `ppw auth refresh` in auth bootstrap section.
+
+**Env cleanup applied:**
+- `.env.sample`:
+  - `PPW_TOKEN_STORE` changed to commented optional override (default path remains implicit)
+  - legacy manual token vars changed to commented optional fallback
+- `.env`:
+  - removed explicit default `PPW_TOKEN_STORE=~/.ppw/tokens.json`
+  - removed live legacy token exports (`INSTAGRAM_ACCESS_TOKEN`, `THREADS_ACCESS_TOKEN`) and replaced with commented fallback notes
+
+**Validation:**
+- `/opt/homebrew/bin/go test ./...` passed

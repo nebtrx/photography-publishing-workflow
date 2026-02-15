@@ -4,15 +4,16 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"photography-publishing-workflow/internal/ai"
 	"photography-publishing-workflow/internal/archiver"
+	"photography-publishing-workflow/internal/authn"
 	"photography-publishing-workflow/internal/config"
 	"photography-publishing-workflow/internal/hosting"
 	"photography-publishing-workflow/internal/instagram"
-	"photography-publishing-workflow/internal/meta"
 	"photography-publishing-workflow/internal/pipeline"
 	"photography-publishing-workflow/internal/publisher"
 	"photography-publishing-workflow/internal/tui"
@@ -86,9 +87,8 @@ func buildAppOptions(cfg *config.Config) tui.AppOptions {
 // Returns nil if R2 or Instagram credentials are missing.
 //
 // Auth modes:
-//   - If META_APP_ID + META_APP_SECRET + META_PAGE_ID are set: uses Page token
-//     derived via TokenManager (recommended, supports auto-retry on 401).
-//   - Otherwise: falls back to static INSTAGRAM_ACCESS_TOKEN (legacy).
+//   - Managed mode: run `ppw auth login` once, then publish uses store-backed tokens.
+//   - Fallback mode: static INSTAGRAM_ACCESS_TOKEN from environment (legacy).
 func buildPublisher(cfg *config.Config) *publisher.Publisher {
 	r2Cfg, err := hosting.R2ConfigFromEnv()
 	if err != nil {
@@ -128,24 +128,26 @@ func buildInstagramClient() *instagram.Client {
 	return client
 }
 
-// buildInstagramClientWithMeta returns the IG client and optional token manager used for managed auth.
-func buildInstagramClientWithMeta() (*instagram.Client, *meta.TokenManager) {
+// buildInstagramClientWithMeta returns the IG client and optional auth manager used for managed auth.
+func buildInstagramClientWithMeta() (*instagram.Client, *authn.Manager) {
 	userID := os.Getenv("INSTAGRAM_USER_ID")
-	metaCfg := buildMetaConfig()
+	authMgr, err := buildAuthManager()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: auth manager setup failed: %v\n", err)
+	}
 
-	// Try auth-managed mode (Page token via TokenManager)
-	if metaCfg.AppID != "" && metaCfg.AppSecret != "" && metaCfg.PageID != "" && metaCfg.UserToken != "" {
-		tm := meta.NewTokenManager(metaCfg)
+	// Try auth-managed mode (store-backed token lifecycle).
+	if authMgr != nil && strings.TrimSpace(os.Getenv("META_PAGE_ID")) != "" {
 		client, err := instagram.NewClientWithTokenSource(
 			userID,
-			func(ctx context.Context) (string, error) { return tm.GetPageAccessToken(ctx) },
-			tm.InvalidatePageTokenCache,
+			func(ctx context.Context) (string, error) { return authMgr.PageAccessToken(ctx) },
+			nil,
 		)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Meta auth setup failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Warning: store-backed auth setup failed: %v\n", err)
 		} else {
-			fmt.Fprintln(os.Stderr, "[publish] Using Page token auth (META_APP_ID configured)")
-			return client, tm
+			fmt.Fprintln(os.Stderr, "[publish] Using managed auth (token store + automatic refresh)")
+			return client, authMgr
 		}
 	}
 
@@ -154,6 +156,6 @@ func buildInstagramClientWithMeta() (*instagram.Client, *meta.TokenManager) {
 	if err != nil {
 		return nil, nil // Instagram not configured
 	}
-	fmt.Fprintln(os.Stderr, "[publish] Using static token auth (set META_APP_ID/META_APP_SECRET/META_PAGE_ID for managed auth)")
+	fmt.Fprintln(os.Stderr, "[publish] Using legacy static token auth (run `ppw auth login` to migrate)")
 	return client, nil
 }

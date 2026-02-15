@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"photography-publishing-workflow/internal/meta"
+	"photography-publishing-workflow/internal/authn"
 	"photography-publishing-workflow/internal/publisher"
 )
 
@@ -67,7 +67,7 @@ func envBool(name string) bool {
 
 func buildSyndicationOptions(
 	ctx context.Context,
-	tm *meta.TokenManager,
+	authMgr *authn.Manager,
 	enableFacebook bool,
 	enableThreads bool,
 	strict bool,
@@ -85,16 +85,25 @@ func buildSyndicationOptions(
 		if pageID == "" {
 			return opts, fmt.Errorf("facebook syndication requires META_PAGE_ID")
 		}
+		legacyIGToken := strings.TrimSpace(os.Getenv("INSTAGRAM_ACCESS_TOKEN"))
 
 		var tokenFn publisher.AccessTokenSource
-		if tm != nil {
-			tokenFn = tm.GetPageAccessToken
+		if authMgr != nil {
+			tokenFn = func(ctx context.Context) (string, error) {
+				token, err := authMgr.PageAccessToken(ctx)
+				if err == nil && strings.TrimSpace(token) != "" {
+					return token, nil
+				}
+				if legacyIGToken != "" {
+					return legacyIGToken, nil
+				}
+				return "", err
+			}
 		} else {
-			staticToken := strings.TrimSpace(os.Getenv("INSTAGRAM_ACCESS_TOKEN"))
-			if staticToken == "" {
+			if legacyIGToken == "" {
 				return opts, fmt.Errorf("facebook syndication requires a usable token source")
 			}
-			tokenFn = func(context.Context) (string, error) { return staticToken, nil }
+			tokenFn = func(context.Context) (string, error) { return legacyIGToken, nil }
 		}
 
 		fb, err := publisher.NewFacebookLinkClient(pageID, tokenFn)
@@ -106,12 +115,37 @@ func buildSyndicationOptions(
 
 	if enableThreads {
 		threadsID := strings.TrimSpace(os.Getenv("THREADS_USER_ID"))
-		threadsToken := strings.TrimSpace(os.Getenv("THREADS_ACCESS_TOKEN"))
-		if threadsID == "" || threadsToken == "" {
-			return opts, fmt.Errorf("threads syndication requires THREADS_USER_ID and THREADS_ACCESS_TOKEN")
+		legacyThreadsToken := strings.TrimSpace(os.Getenv("THREADS_ACCESS_TOKEN"))
+		if threadsID == "" && authMgr != nil {
+			status, err := authMgr.Status()
+			if err == nil {
+				threadsID = strings.TrimSpace(status.Threads.UserID)
+			}
+		}
+		if threadsID == "" {
+			return opts, fmt.Errorf("threads syndication requires THREADS_USER_ID (or run `ppw auth login`)")
 		}
 
-		th, err := publisher.NewThreadsClient(threadsID, threadsToken)
+		var tokenFn publisher.AccessTokenSource
+		if authMgr != nil {
+			tokenFn = func(ctx context.Context) (string, error) {
+				token, err := authMgr.ThreadsAccessToken(ctx)
+				if err == nil && strings.TrimSpace(token) != "" {
+					return token, nil
+				}
+				if legacyThreadsToken != "" {
+					return legacyThreadsToken, nil
+				}
+				return "", err
+			}
+		} else {
+			if legacyThreadsToken == "" {
+				return opts, fmt.Errorf("threads syndication requires THREADS_ACCESS_TOKEN (or run `ppw auth login`)")
+			}
+			tokenFn = func(context.Context) (string, error) { return legacyThreadsToken, nil }
+		}
+
+		th, err := publisher.NewThreadsClient(threadsID, tokenFn)
 		if err != nil {
 			return opts, err
 		}
@@ -120,8 +154,8 @@ func buildSyndicationOptions(
 
 	// Best effort preflight: verify facebook token can be derived now when using managed auth.
 	// This surfaces auth issues early in CLI mode.
-	if enableFacebook && tm != nil && !dryRun {
-		if _, err := tm.GetPageAccessToken(ctx); err != nil {
+	if enableFacebook && authMgr != nil && !dryRun {
+		if _, err := authMgr.PageAccessToken(ctx); err != nil {
 			return opts, fmt.Errorf("facebook page token preflight failed: %w", err)
 		}
 	}
