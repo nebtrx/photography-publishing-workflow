@@ -2,7 +2,7 @@
 
 ## Goal
 
-Given a validated manifest, generate three pieces of metadata using AI: a caption matching the user's personal writing style, a location identification for the Instagram location field, and a music track suggestion. The manifest is updated in place with the enrichment results and transitioned to `pending_review`.
+Given a validated manifest, generate two pieces of metadata using AI: a caption matching the user's personal writing style and a location identification for the Instagram location field. The manifest is updated in place with the enrichment results and transitioned to `pending_review`.
 
 ## Context / Constraints
 
@@ -10,7 +10,6 @@ Given a validated manifest, generate three pieces of metadata using AI: a captio
 - Cost constraint: prefer local AI processing (Claude Code Pro subscription) over paid API keys.
 - The style corpus (scraped past Instagram captions) must be loaded and injected into the caption prompt.
 - Location identification uses AI vision first, EXIF GPS as fallback. If neither works, the location field is omitted.
-- Music suggestion is nice-to-have. If it fails, the manifest proceeds without it.
 - All AI calls are best-effort — enrichment should degrade gracefully, not block the pipeline.
 - This stage reads images from disk to pass to the AI model (vision capabilities required).
 
@@ -21,7 +20,6 @@ Given a validated manifest, generate three pieces of metadata using AI: a captio
 - Optional:
   - `--style-corpus <path>`: Path to the style corpus JSON file. Default: `config/style_corpus.json`.
   - `--skip-location`: Skip location identification.
-  - `--skip-music`: Skip music suggestion.
   - `--dry-run`: Print what AI calls would be made without executing them.
 - Environment variables:
   - `CLAUDE_CLI_PATH`: Path to the `claude` CLI binary (default: `claude` on PATH).
@@ -51,12 +49,6 @@ Given a validated manifest, generate three pieces of metadata using AI: a captio
       "query_used": "Erasmusbrug Rotterdam",
       "confidence": "high",
       "fallback_used": false
-    },
-    "music_suggestion": {
-      "artist": "Olafur Arnalds",
-      "title": "Near Light",
-      "mood": "contemplative, atmospheric",
-      "generated_at": "2026-02-10T18:32:10Z"
     }
   }
 }
@@ -88,18 +80,11 @@ Given a validated manifest, generate three pieces of metadata using AI: a captio
 5. If neither AI nor EXIF yields a location: set `location` to `null`. This is not an error.
 6. Note: mapping `location.name` to an Instagram location ID happens during the publish stage (requires Instagram API), not here.
 
-### 3. Music Suggestion
-
-1. Send the hero image to the AI provider with the music suggestion prompt (see `directives/prompts/music_suggestion.md`).
-2. Parse the response for: artist, title, and mood description.
-3. If the AI returns a suggestion: populate `music_suggestion`.
-4. If the AI fails or returns nothing useful: set `music_suggestion` to `null`. This is not an error.
-
-### 4. Finalize
+### 3. Finalize
 
 5. Write all enrichment results to the manifest.
 6. Transition manifest state to `pending_review`.
-7. Log a summary to stdout: caption preview (first 80 chars), location (or "none"), music (or "none").
+7. Log a summary to stdout: caption preview (first 80 chars), location (or "none").
 
 ## Edge Cases / Failure Modes
 
@@ -130,7 +115,7 @@ Given a validated manifest, generate three pieces of metadata using AI: a captio
 - [ ] Given an image with no GPS and no recognizable landmark, the tool sets location to null without error.
 - [ ] Given a missing style corpus file, the tool proceeds with caption generation (degraded quality) and logs a warning.
 - [ ] Given `--dry-run`, the tool prints the prompts that would be sent but makes no AI calls.
-- [ ] Given `--skip-location --skip-music`, only caption generation runs.
+- [ ] Given `--skip-location`, only caption generation runs.
 - [ ] The manifest transitions from `validated` to `pending_review` after enrichment.
 - [ ] All AI call failures are non-blocking: the pipeline continues with whatever enrichment succeeded.
 - [ ] Caption hashtag categories include at least one from: location, weather/atmosphere, photography style, or camera hardware (when applicable).

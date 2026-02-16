@@ -50,6 +50,7 @@ type Publisher struct {
 	logger            *log.Logger
 	httpClient        *http.Client
 	dryRun            bool
+	cleanupOnFailure  bool
 	enableFacebook    bool
 	enableThreads     bool
 	strictSyndication bool
@@ -60,6 +61,7 @@ type Publisher struct {
 // Options configures the publisher.
 type Options struct {
 	DryRun            bool
+	CleanupOnFailure  bool
 	EnableFacebook    bool
 	EnableThreads     bool
 	StrictSyndication bool
@@ -94,6 +96,7 @@ func New(host hosting.Host, ig InstagramAPI, opts Options) *Publisher {
 		logger:            log.New(logOutput, "[publish] ", log.LstdFlags),
 		httpClient:        defaultHTTPClient(opts.HTTPClient),
 		dryRun:            opts.DryRun,
+		cleanupOnFailure:  opts.CleanupOnFailure,
 		enableFacebook:    opts.EnableFacebook,
 		enableThreads:     opts.EnableThreads,
 		strictSyndication: opts.StrictSyndication,
@@ -145,7 +148,7 @@ func (p *Publisher) Publish(ctx context.Context, m *manifest.Manifest, manifestP
 			maxCarousel,
 			len(m.Images),
 		)
-		p.setError(m, manifestPath, manifest.FailureStagePublish, err)
+		p.fail(ctx, m, manifestPath, manifest.FailureStagePublish, err)
 		return err
 	}
 
@@ -197,13 +200,13 @@ func (p *Publisher) Publish(ctx context.Context, m *manifest.Manifest, manifestP
 
 	// 3. Upload images to R2
 	if err := p.uploadImages(ctx, m, manifestPath); err != nil {
-		p.setError(m, manifestPath, manifest.FailureStagePublish, err)
+		p.fail(ctx, m, manifestPath, manifest.FailureStagePublish, err)
 		return fmt.Errorf("upload images: %w", err)
 	}
 
 	mediaCandidates, err := p.preflightMedia(ctx, m)
 	if err != nil {
-		p.setError(m, manifestPath, manifest.FailureStagePublish, err)
+		p.fail(ctx, m, manifestPath, manifest.FailureStagePublish, err)
 		return fmt.Errorf("media preflight: %w", err)
 	}
 
@@ -235,7 +238,7 @@ func (p *Publisher) Publish(ctx context.Context, m *manifest.Manifest, manifestP
 	)
 	if err := p.createAndPublish(ctx, m, manifestPath, caption, locationID, mediaCandidates); err != nil {
 		obslog.Result(p.logger, "publisher", m.ID, m.ID, "publish_instagram", instagramStart, err, nil)
-		p.setError(m, manifestPath, manifest.FailureStagePublish, err)
+		p.fail(ctx, m, manifestPath, manifest.FailureStagePublish, err)
 		return err
 	}
 	obslog.Result(
@@ -260,7 +263,7 @@ func (p *Publisher) Publish(ctx context.Context, m *manifest.Manifest, manifestP
 	// 9. Optional syndication (facebook / threads)
 	if err := p.syndicate(ctx, m, manifestPath, caption); err != nil {
 		if p.strictSyndication {
-			p.setError(m, manifestPath, manifest.FailureStageSyndicate, err)
+			p.fail(ctx, m, manifestPath, manifest.FailureStageSyndicate, err)
 			return err
 		}
 		p.logger.Printf("Warning: syndication failed: %v", err)
@@ -284,6 +287,20 @@ func (p *Publisher) Publish(ctx context.Context, m *manifest.Manifest, manifestP
 	}
 
 	return nil
+}
+
+func (p *Publisher) fail(
+	ctx context.Context,
+	m *manifest.Manifest,
+	manifestPath string,
+	stage manifest.FailureStage,
+	err error,
+) {
+	if p.cleanupOnFailure && m != nil && m.Publishing != nil && !m.Publishing.R2Cleaned && len(m.Publishing.R2Keys) > 0 {
+		p.logger.Printf("cleanup_on_failure=always: deleting %d uploaded R2 objects", len(m.Publishing.R2Keys))
+		p.cleanupR2(ctx, m, manifestPath)
+	}
+	p.setError(m, manifestPath, stage, err)
 }
 
 func (p *Publisher) resetPublishArtifactsForRetry(m *manifest.Manifest) {

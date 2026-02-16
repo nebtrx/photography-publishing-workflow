@@ -23,7 +23,6 @@ import (
 type Options struct {
 	CorpusPath   string
 	SkipLocation bool
-	SkipMusic    bool
 	DryRun       bool
 	LogOutput    io.Writer
 }
@@ -176,7 +175,6 @@ func (p *Pipeline) Run(ctx context.Context, dir string) *Result {
 	// 3. Enrich
 	e := enricher.New(p.provider, enricher.Options{
 		SkipLocation: p.opts.SkipLocation,
-		SkipMusic:    p.opts.SkipMusic,
 		CorpusPath:   p.opts.CorpusPath,
 		LogOutput:    p.opts.LogOutput,
 	})
@@ -187,10 +185,9 @@ func (p *Pipeline) Run(ctx context.Context, dir string) *Result {
 		postHint,
 		postHint,
 		"enrich",
-		"generate caption, location, and music enrichment",
+		"generate caption and location enrichment",
 		map[string]any{
 			"skip_location": p.opts.SkipLocation,
-			"skip_music":    p.opts.SkipMusic,
 		},
 	)
 	p.logger.Printf("Enriching %s...", m.ID)
@@ -216,12 +213,11 @@ func (p *Pipeline) Run(ctx context.Context, dir string) *Result {
 		enrichStart,
 		nil,
 		map[string]any{
-			"final_state":    m.State,
-			"caption_exists": m.Enrichment != nil && m.Enrichment.Caption != nil,
+			"final_state": m.State,
+			"caption_exists": m.Enrichment != nil &&
+				m.Enrichment.Caption != nil,
 			"location_exists": m.Enrichment != nil &&
 				m.Enrichment.Location != nil,
-			"music_exists": m.Enrichment != nil &&
-				m.Enrichment.MusicSuggestion != nil,
 		},
 	)
 	p.logger.Printf("Enriched %s → %s", m.ID, m.State)

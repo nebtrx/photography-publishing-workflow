@@ -119,6 +119,7 @@ Tokens are stored in the configured auth token store.`,
 			}
 			opts.DryRun = dryRun
 			opts.LogOutput = session.Writer
+			opts.CleanupOnFailure = cfg.Publishing.CleanupOnFailure == "always"
 
 			pub := publisher.New(host, ig, opts)
 

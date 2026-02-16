@@ -2,7 +2,7 @@
 
 ## Goal
 
-Present enriched posts to the user for review in a keyboard-driven TUI. The user sees all images in order, the generated caption (with hashtags), location, and music suggestion. They can approve, reject, edit the caption, toggle story publishing, and choose between immediate publish or schedule-to-queue. No post is ever published without explicit user approval.
+Present enriched posts to the user for review in a keyboard-driven TUI. The user sees all images in order, the generated caption (with hashtags) and location. They can approve, reject, edit the caption, toggle story publishing, and choose between immediate publish or schedule-to-queue. No post is ever published without explicit user approval.
 
 ## Context / Constraints
 
@@ -84,7 +84,7 @@ Present enriched posts to the user for review in a keyboard-driven TUI. The user
 1. **Post list panel** (left): Up/Down arrows or `j`/`k` to select a post. Shows post name and image count.
 2. **Image preview panel** (top-right): Left/Right arrows or `h`/`l` to browse images within the selected post. Shows filename, dimensions, and aspect ratio. Opens image in external viewer on Enter (macOS: `open <file>`).
 3. **Caption panel** (bottom-left): Shows the generated caption with hashtags highlighted.
-4. **Details panel** (bottom-right): Shows location, music suggestion, story toggle status, and keybindings.
+4. **Details panel** (bottom-right): Shows location, story toggle status, and keybindings.
 
 ### Actions
 
@@ -116,7 +116,7 @@ Present enriched posts to the user for review in a keyboard-driven TUI. The user
 
 ## Acceptance Criteria
 
-- [ ] Given a manifest in `pending_review` state, the TUI displays all images, the caption, location, and music suggestion.
+- [ ] Given a manifest in `pending_review` state, the TUI displays all images, the caption, and location.
 - [ ] The user can approve a post for immediate publish with a single keystroke (`a`).
 - [ ] The user can approve a post for queued scheduling with a single keystroke (`q`).
 - [ ] The user can reject a post with a single keystroke (`r`).

@@ -19,7 +19,6 @@ func watchCmd() *cobra.Command {
 		dir          string
 		corpusPath   string
 		skipLocation bool
-		skipMusic    bool
 		debounce     time.Duration
 	)
 
@@ -63,7 +62,6 @@ Press Ctrl+C to stop watching.`,
 			p := pipeline.New(provider, pipeline.Options{
 				CorpusPath:   corpusPath,
 				SkipLocation: skipLocation,
-				SkipMusic:    skipMusic,
 				LogOutput:    session.Writer,
 			})
 
@@ -106,7 +104,6 @@ Press Ctrl+C to stop watching.`,
 	cmd.Flags().StringVar(&dir, "dir", "", "Directory to watch for new post subdirectories (required)")
 	cmd.Flags().StringVar(&corpusPath, "corpus", "", "Path to style corpus JSON")
 	cmd.Flags().BoolVar(&skipLocation, "skip-location", false, "Skip location identification")
-	cmd.Flags().BoolVar(&skipMusic, "skip-music", false, "Skip music suggestion")
 	cmd.Flags().DurationVar(&debounce, "debounce", 2*time.Second, "Wait time before processing a new directory")
 
 	return cmd

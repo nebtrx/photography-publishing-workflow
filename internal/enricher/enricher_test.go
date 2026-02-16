@@ -35,8 +35,6 @@ func TestEnrich_FullPipeline(t *testing.T) {
 		`The quiet geometry of #architecture reveals itself in the morning light, when every line becomes a conversation between #shadow and #concrete`,
 		// Location response
 		`{"location_name": "Markthal, Rotterdam", "city": "Rotterdam", "country": "Netherlands", "confidence": "high", "reasoning": "The distinctive arched ceiling of the Markthal is visible"}`,
-		// Music response
-		`{"artist": "Nils Frahm", "title": "Says", "mood": "expansive, meditative", "reasoning": "The geometric patterns match the repetitive textures"}`,
 	)
 
 	e := New(mockProvider, Options{})
@@ -74,21 +72,13 @@ func TestEnrich_FullPipeline(t *testing.T) {
 		t.Errorf("location source = %q, want %q", m.Enrichment.Location.Source, "ai_vision")
 	}
 
-	// Music should be populated
-	if m.Enrichment.MusicSuggestion == nil {
-		t.Fatal("enrichment.music_suggestion is nil")
-	}
-	if m.Enrichment.MusicSuggestion.Artist != "Nils Frahm" {
-		t.Errorf("music artist = %q, want %q", m.Enrichment.MusicSuggestion.Artist, "Nils Frahm")
-	}
-
-	// Should have made 3 AI calls
-	if len(mockProvider.Calls) != 3 {
-		t.Errorf("AI calls = %d, want 3", len(mockProvider.Calls))
+	// Should have made 2 AI calls
+	if len(mockProvider.Calls) != 2 {
+		t.Errorf("AI calls = %d, want 2", len(mockProvider.Calls))
 	}
 }
 
-func TestEnrich_SkipLocationAndMusic(t *testing.T) {
+func TestEnrich_SkipLocation(t *testing.T) {
 	m := setupValidatedManifest(t)
 
 	mockProvider := ai.NewMock(
@@ -98,7 +88,6 @@ func TestEnrich_SkipLocationAndMusic(t *testing.T) {
 
 	e := New(mockProvider, Options{
 		SkipLocation: true,
-		SkipMusic:    true,
 	})
 	if err := e.Enrich(context.Background(), m); err != nil {
 		t.Fatalf("Enrich: %v", err)
@@ -109,9 +98,6 @@ func TestEnrich_SkipLocationAndMusic(t *testing.T) {
 	}
 	if m.Enrichment.Location != nil {
 		t.Error("location should be nil when skipped")
-	}
-	if m.Enrichment.MusicSuggestion != nil {
-		t.Error("music should be nil when skipped")
 	}
 
 	// Should have made only 1 AI call
@@ -128,8 +114,6 @@ func TestEnrich_LocationFallbackToNone(t *testing.T) {
 		`A moment between #light and #dark`,
 		// Location with no confidence
 		`{"location_name": null, "city": null, "country": null, "confidence": "none", "reasoning": "Abstract image"}`,
-		// Music
-		`{"artist": "Brian Eno", "title": "Music for Airports", "mood": "ambient", "reasoning": "match"}`,
 	)
 
 	e := New(mockProvider, Options{})

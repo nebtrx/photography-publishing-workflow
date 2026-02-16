@@ -16,15 +16,14 @@ func enrichCmd() *cobra.Command {
 		manifestPath string
 		corpusPath   string
 		skipLocation bool
-		skipMusic    bool
 		dryRun       bool
 		timeout      time.Duration
 	)
 
 	cmd := &cobra.Command{
 		Use:   "enrich",
-		Short: "AI-enrich a validated manifest with caption, location, and music",
-		Long:  "Generates caption (with inline hashtags), identifies location, and suggests music using AI.\nProvider is configured in ppw.toml under [ai].",
+		Short: "AI-enrich a validated manifest with caption and location",
+		Long:  "Generates caption (with inline hashtags) and identifies location using AI.\nProvider is configured in ppw.toml under [ai].",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if manifestPath == "" {
 				return fmt.Errorf("--manifest is required")
@@ -48,14 +47,10 @@ func enrichCmd() *cobra.Command {
 				fmt.Printf("  Images:        %d\n", len(m.Images))
 				fmt.Printf("  Corpus:        %s\n", valueOrDefault(corpusPath, "(none)"))
 				fmt.Printf("  Skip location: %v\n", skipLocation)
-				fmt.Printf("  Skip music:    %v\n", skipMusic)
 				fmt.Println("\n  AI calls that would be made:")
 				fmt.Println("    1. Caption generation (with hero image + style corpus)")
 				if !skipLocation {
 					fmt.Println("    2. Location identification (with hero image)")
-				}
-				if !skipMusic {
-					fmt.Println("    3. Music suggestion (with hero image)")
 				}
 				return nil
 			}
@@ -65,7 +60,6 @@ func enrichCmd() *cobra.Command {
 
 			e := enricher.New(provider, enricher.Options{
 				SkipLocation: skipLocation,
-				SkipMusic:    skipMusic,
 				CorpusPath:   corpusPath,
 			})
 
@@ -92,7 +86,6 @@ func enrichCmd() *cobra.Command {
 	cmd.Flags().StringVar(&manifestPath, "manifest", "", "Path to manifest.json (required)")
 	cmd.Flags().StringVar(&corpusPath, "corpus", "", "Path to style corpus JSON (default: config/style_corpus.json)")
 	cmd.Flags().BoolVar(&skipLocation, "skip-location", false, "Skip location identification")
-	cmd.Flags().BoolVar(&skipMusic, "skip-music", false, "Skip music suggestion")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print what would be done without making AI calls")
 	cmd.Flags().DurationVar(&timeout, "timeout", 3*time.Minute, "Overall timeout for all AI calls")
 
@@ -122,11 +115,6 @@ func printEnrichmentSummary(m *manifest.Manifest) {
 		fmt.Println("  Location: (none)")
 	}
 
-	if ms := m.Enrichment.MusicSuggestion; ms != nil {
-		fmt.Printf("  Music:    %s — %s (%s)\n", ms.Artist, ms.Title, ms.Mood)
-	} else {
-		fmt.Println("  Music:    (none)")
-	}
 }
 
 func valueOrDefault(s, fallback string) string {

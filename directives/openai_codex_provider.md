@@ -2,7 +2,7 @@
 
 ## Goal
 
-Add a second AI provider (`codex-cli`) that uses the OpenAI Codex CLI as a subprocess for AI enrichment (caption generation, location identification, music suggestion). This leverages the user's ChatGPT Plus/Pro subscription — no API key or credits needed. The provider is selected at runtime via `PPW_AI_PROVIDER=codex` and satisfies the existing `ai.Provider` interface identically to the Claude CLI provider.
+Add a second AI provider (`codex-cli`) that uses the OpenAI Codex CLI as a subprocess for AI enrichment (caption generation and location identification). This leverages the user's ChatGPT Plus/Pro subscription — no API key or credits needed. The provider is selected at runtime via `PPW_AI_PROVIDER=codex` and satisfies the existing `ai.Provider` interface identically to the Claude CLI provider.
 
 ## Context / Constraints
 

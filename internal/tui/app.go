@@ -1224,14 +1224,6 @@ func (m AppModel) renderPostDetail(post *PostEntry, w int, showActions bool) str
 		sections = append(sections, man.Enrichment.Location.Name+" ("+man.Enrichment.Location.Source+")")
 	}
 
-	// Music
-	if man.Enrichment != nil && man.Enrichment.MusicSuggestion != nil {
-		ms := man.Enrichment.MusicSuggestion
-		sections = append(sections, "")
-		sections = append(sections, labelStyle.Render("Music"))
-		sections = append(sections, ms.Artist+" — "+ms.Title+" ("+ms.Mood+")")
-	}
-
 	// Story toggle
 	storyState := "OFF"
 	if man.Review != nil && man.Review.StoryEnabled {

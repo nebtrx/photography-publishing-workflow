@@ -147,6 +147,7 @@ func buildPublisher(cfg *config.Config, logOutput io.Writer) *publisher.Publishe
 	}
 
 	opts.LogOutput = logOutput
+	opts.CleanupOnFailure = cfg.Publishing.CleanupOnFailure == "always"
 	return publisher.New(r2, igClient, opts)
 }
 

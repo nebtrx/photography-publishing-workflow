@@ -72,6 +72,7 @@ type AuthConfig struct {
 type PublishingConfig struct {
 	Destinations      []string `toml:"destinations"`
 	StrictSyndication bool     `toml:"strict_syndication"`
+	CleanupOnFailure  string   `toml:"cleanup_on_failure"` // never|always
 }
 
 // LoggingConfig configures runtime and per-job logging.
@@ -144,6 +145,10 @@ func Load(path string) (*Config, error) {
 	if len(cfg.Publishing.Destinations) == 0 {
 		cfg.Publishing.Destinations = []string{"instagram"}
 	}
+	cfg.Publishing.CleanupOnFailure = normalizeCleanupOnFailure(cfg.Publishing.CleanupOnFailure)
+	if cfg.Publishing.CleanupOnFailure == "" {
+		cfg.Publishing.CleanupOnFailure = "never"
+	}
 
 	return &cfg, nil
 }
@@ -168,6 +173,18 @@ func normalizeProvider(raw string) string {
 		return "codex"
 	default:
 		return "claude"
+	}
+}
+
+func normalizeCleanupOnFailure(raw string) string {
+	v := strings.TrimSpace(strings.ToLower(raw))
+	switch v {
+	case "always":
+		return "always"
+	case "", "never":
+		return "never"
+	default:
+		return "never"
 	}
 }
 

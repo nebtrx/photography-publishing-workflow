@@ -116,12 +116,6 @@ None. White border workflow is deprecated.
   3. If neither yields a location: omit the field.
 - Map identified location to Instagram's location database via Instagram API.
 
-### Music
-
-- AI suggests a music track (artist + title) matching the image atmosphere/mood.
-- Actual attachment to the post is MANUAL (Instagram API does not support music attachment).
-- Nice-to-have: attempt to match the suggestion against Instagram's available music library.
-
 ### Style Reference
 
 - Scrape ~200 past posts from user's Instagram profile (configured via handle as a config parameter).
@@ -143,7 +137,6 @@ None. White border workflow is deprecated.
 
 ### Requires Manual Intervention
 
-- Music track attachment (Instagram API limitation).
 - Review and approval of generated content before publishing.
 - Resolution of flagged issues (e.g., aspect ratio mismatches).
 
@@ -216,8 +209,6 @@ None. White border workflow is deprecated.
 
 ### Nice-to-Haves
 
-- Music track suggestion matching image atmosphere.
-- Matching music suggestion to Instagram's available library.
 - LazyGit-style TUI for review (vs simpler web UI).
 - Scraping past captions for style matching (vs manual export).
 
@@ -235,5 +226,4 @@ None. White border workflow is deprecated.
 8. **Scheduling**: Given a "queue" action, the post is placed in the next available schedule slot. The schedule respects configured optimal times and batch limits.
 9. **Story publishing**: Given story toggle is enabled, the system publishes the hero image as a story alongside the post. Given toggle is disabled, no story is created.
 10. **Archival**: After successful publish, source images are moved to an archive directory and a log entry is created with full metadata.
-11. **Music suggestion** (nice-to-have): Given an image set, the system suggests a music track (artist + title) that matches the mood/atmosphere of the images.
-12. **No prohibited actions**: The system never performs engagement automation, cross-posting, image editing, analytics, or follower management.
+11. **No prohibited actions**: The system never performs engagement automation, cross-posting, image editing, analytics, or follower management.

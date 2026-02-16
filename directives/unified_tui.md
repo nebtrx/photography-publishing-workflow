@@ -80,7 +80,6 @@ Replace the multi-subcommand workflow with a single, unified terminal UI launche
 - Image list with dimensions, aspect ratio, hero marker
 - Caption (AI-generated or edited)
 - Location (if identified)
-- Music suggestion (if generated)
 - Story toggle status
 - Keybinding hints
 
@@ -282,7 +281,7 @@ log_file = "~/Photos/publish.log"
 - [ ] Each panel has its own fully bordered box with visible gaps between panels (no shared borders).
 - [ ] Tab/Shift-Tab cycles through panels. Active panel has highlighted border.
 - [ ] Pending Review shows all `pending_review` manifests from the watch directory.
-- [ ] Selecting a post shows its full detail (images, caption, location, music) in the right panel.
+- [ ] Selecting a post shows its full detail (images, caption, location) in the right panel.
 - [ ] `e` opens an overlay popup editor for the caption. Ctrl+S saves, Esc cancels.
 - [ ] `a` on a pending post shows a confirmation dialog: "Publish now or add to queue?"
 - [ ] Publishing runs in background with progress in status bar.

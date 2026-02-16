@@ -1074,3 +1074,83 @@ Store value indicated `meta.user_expires_at` was written near current time.
 - Added/updated tests:
   - `internal/publisher/publisher_test.go`: `TestPublish_RetryFromErrorStateWhenApproved` now verifies stale artifacts are cleared and media is re-uploaded.
   - `internal/tui/loader_test.go`: retry prep test now verifies publish artifacts are cleared.
+
+## 2026-02-16 — cleanup_on_failure policy wired + API capability clarification
+**Context:** After successful publish recovery, user requested:
+1) enforce cleanup of uploaded R2 objects on failed publish attempts (`cleanup_on_failure=always`),
+2) confirm whether Instagram-style music attachment is supported via API.
+
+**Implemented (code):**
+- Added publishing policy config:
+  - `internal/config/config.go`
+    - `PublishingConfig.CleanupOnFailure` (`never|always`, default `never`)
+- Wired policy into publisher creation paths:
+  - `cmd/ppw/default.go`
+  - `cmd/ppw/publish.go`
+- Added publisher runtime behavior:
+  - `internal/publisher/publisher.go`
+    - new option/field: `CleanupOnFailure bool`
+    - new failure helper: `fail(...)` that runs `cleanupR2(...)` before recording error when policy is `always`
+    - applied to publish failure paths (upload/preflight/publish/syndication-strict)
+- Tests:
+  - `internal/publisher/publisher_test.go`
+    - assert default behavior keeps uploaded artifacts (`cleanup_on_failure=never`)
+    - assert cleanup occurs when `CleanupOnFailure=true` (`r2_cleaned=true`, deleted keys > 0)
+
+**Config updates:**
+- `config/ppw.toml`: set `cleanup_on_failure = "always"`
+- `config/ppw.toml.example`: documented `cleanup_on_failure = "never" # never|always`
+- `README.md`: added publishing note for `cleanup_on_failure` behavior.
+
+**Validation:**
+- `gofmt -w ...` on touched files
+- `/opt/homebrew/bin/go test ./internal/publisher ./internal/config ./cmd/ppw`
+- `/opt/homebrew/bin/go test ./...`
+- all passed.
+
+## 2026-02-16 — Removed music inference/resolution feature end-to-end
+**Context:** User requested complete removal of music inference/resolution from runtime behavior and docs/prompts.
+
+**Implemented:**
+- Data model:
+  - `internal/manifest/manifest.go`
+    - removed `MusicSuggestion` type
+    - removed `enrichment.music_suggestion` field
+- Enricher runtime:
+  - `internal/enricher/enricher.go`
+    - removed `SkipMusic` option
+    - removed music extraction step (`extract_music`) and parsing helpers
+    - enrichment now performs caption + optional location only
+- Pipeline runtime:
+  - `internal/pipeline/pipeline.go`
+    - removed `SkipMusic` option/wiring
+    - enrich intent/details updated to caption/location only
+- CLI surface:
+  - `cmd/ppw/enrich.go`
+    - removed `--skip-music`
+    - removed music dry-run/summary output
+    - help text updated
+  - `cmd/ppw/pipeline.go`
+    - removed `--skip-music`
+  - `cmd/ppw/watch.go`
+    - removed `--skip-music`
+- TUI surface:
+  - `internal/tui/app.go`
+  - `internal/tui/tui.go`
+  - removed music section rendering from post detail panels
+- AI package docs:
+  - `internal/ai/provider.go` comments updated to caption/location scope
+- Prompt/doc cleanup:
+  - deleted `directives/prompts/music_suggestion.md`
+  - updated directives and README references to remove music feature mentions.
+
+**Tests updated:**
+- `internal/enricher/enricher_test.go`
+- `internal/pipeline/pipeline_test.go`
+- call counts and skip-option cases adjusted for 2-step enrichment (caption/location)
+
+**Validation:**
+- `gofmt -w` on touched files
+- `/opt/homebrew/bin/go test ./internal/enricher ./internal/pipeline ./internal/tui ./cmd/ppw`
+- `/opt/homebrew/bin/go test ./...`
+- all passed.

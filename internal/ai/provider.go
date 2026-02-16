@@ -1,5 +1,5 @@
 // Package ai defines the AI provider interface and implementations for
-// generating captions, identifying locations, and suggesting music.
+// generating captions and identifying locations.
 package ai
 
 import "context"

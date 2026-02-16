@@ -16,7 +16,6 @@ func pipelineCmd() *cobra.Command {
 		dir          string
 		corpusPath   string
 		skipLocation bool
-		skipMusic    bool
 		dryRun       bool
 		timeout      time.Duration
 	)
@@ -55,7 +54,6 @@ After running, the manifest will be in pending_review state, ready for ppw revie
 			p := pipeline.New(provider, pipeline.Options{
 				CorpusPath:   corpusPath,
 				SkipLocation: skipLocation,
-				SkipMusic:    skipMusic,
 				DryRun:       dryRun,
 				LogOutput:    session.Writer,
 			})
@@ -81,7 +79,6 @@ After running, the manifest will be in pending_review state, ready for ppw revie
 	cmd.Flags().StringVar(&dir, "dir", "", "Post directory containing JPEG images (required)")
 	cmd.Flags().StringVar(&corpusPath, "corpus", "", "Path to style corpus JSON")
 	cmd.Flags().BoolVar(&skipLocation, "skip-location", false, "Skip location identification")
-	cmd.Flags().BoolVar(&skipMusic, "skip-music", false, "Skip music suggestion")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print what would be done without executing")
 	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Minute, "Overall timeout")
 

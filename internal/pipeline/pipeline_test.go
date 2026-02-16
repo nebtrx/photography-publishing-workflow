@@ -22,8 +22,6 @@ func TestPipeline_FullRun(t *testing.T) {
 		`The quiet geometry of #architecture reveals itself`,
 		// Location
 		`{"location_name": "Rotterdam", "city": "Rotterdam", "country": "Netherlands", "confidence": "high", "reasoning": "visible"}`,
-		// Music
-		`{"artist": "Nils Frahm", "title": "Says", "mood": "meditative", "reasoning": "match"}`,
 	)
 
 	p := New(mockProvider, Options{})
@@ -97,13 +95,12 @@ func TestPipeline_SkipOptions(t *testing.T) {
 	}
 
 	mockProvider := ai.NewMock(
-		// Only caption (location and music skipped)
+		// Only caption (location skipped)
 		`Minimal #urban geometry`,
 	)
 
 	p := New(mockProvider, Options{
 		SkipLocation: true,
-		SkipMusic:    true,
 	})
 	result := p.Run(context.Background(), dir)
 
@@ -114,9 +111,6 @@ func TestPipeline_SkipOptions(t *testing.T) {
 	m, _ := manifest.Read(result.ManifestPath)
 	if m.Enrichment.Location != nil {
 		t.Error("location should be nil when skipped")
-	}
-	if m.Enrichment.MusicSuggestion != nil {
-		t.Error("music should be nil when skipped")
 	}
 
 	// Should have made only 1 AI call

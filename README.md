@@ -137,7 +137,7 @@ flowchart LR
 
 - `manifest.json` is the per-post source of truth for workflow state (`scanned`, `validated`, `pending_review`, `approved`, `publishing`, `published`, `error`, etc.).
 - Watcher + pipeline move new inbox posts into review-ready manifests.
-- Enricher calls the configured AI backend (`codex` or `claude`) for caption/location/music.
+- Enricher calls the configured AI backend (`codex` or `claude`) for caption/location.
 - Publisher uploads media to R2, publishes to Instagram, optionally syndicates to Facebook/Threads, then archives.
 - Auth is managed through token lifecycle components (`authn` + `authstore`) backed by `~/.ppw/tokens.json`.
 - Runtime and per-job logs are persisted and queryable via `ppw logs`.
@@ -148,7 +148,7 @@ Pipeline stages in this repository:
 
 1. `scan` -> create manifest from image directory.
 2. `validate` -> validate image set and metadata.
-3. `enrich` -> AI caption/location/music.
+3. `enrich` -> AI caption/location.
 4. `review` -> approve/reject/edit in TUI.
 5. `publish` -> Instagram (plus optional syndication).
 6. `archive` -> move published work to archive + log.
@@ -215,6 +215,7 @@ All runtime behavior is configured there:
 - Threads IDs + app credentials (`[threads]`)
 - Auth token store path (`[auth]`)
 - Syndication defaults (`[publishing]`)
+  - `cleanup_on_failure = "always"` deletes uploaded R2 objects when publish fails
 - Runtime/job logs + retention (`[logging]`)
 - Watch/archive paths (`[watch]`, `[archive]`)
 

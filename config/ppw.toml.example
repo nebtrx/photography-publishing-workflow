@@ -34,6 +34,7 @@ token_store = "~/.ppw/tokens.json"
 [publishing]
 destinations = ["instagram", "facebook", "threads"]
 strict_syndication = false
+cleanup_on_failure = "never" # never|always
 
 [logging]
 runtime_log_file = "~/.ppw/ppw.log"

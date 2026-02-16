@@ -629,7 +629,8 @@ func TestPublish_PublishError_SetsErrorState(t *testing.T) {
 
 	mockIG := newMockInstagram()
 	mockIG.PublishErr = fmt.Errorf("API error: rate limited")
-	pub := New(hosting.NewMemoryHost(), mockIG, Options{})
+	memHost := hosting.NewMemoryHost()
+	pub := New(memHost, mockIG, Options{})
 
 	err := pub.Publish(context.Background(), m, mPath)
 	if err == nil {
@@ -652,6 +653,44 @@ func TestPublish_PublishError_SetsErrorState(t *testing.T) {
 	}
 	if saved.Failure.Stage != manifest.FailureStagePublish {
 		t.Fatalf("failure.stage = %q, want %q", saved.Failure.Stage, manifest.FailureStagePublish)
+	}
+	if len(memHost.Deleted) != 0 {
+		t.Fatalf("deleted=%d, want 0 by default (cleanup_on_failure=never)", len(memHost.Deleted))
+	}
+	if saved.Publishing != nil && saved.Publishing.R2Cleaned {
+		t.Fatal("r2_cleaned should remain false when cleanup_on_failure is disabled")
+	}
+}
+
+func TestPublish_PublishError_CleansR2WhenConfigured(t *testing.T) {
+	m, mPath := setupApprovedManifest(t)
+	m.Images = m.Images[:1]
+	if err := m.Write(mPath); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	mockIG := newMockInstagram()
+	mockIG.PublishErr = fmt.Errorf("API error: rate limited")
+	memHost := hosting.NewMemoryHost()
+	pub := New(memHost, mockIG, Options{CleanupOnFailure: true})
+
+	err := pub.Publish(context.Background(), m, mPath)
+	if err == nil {
+		t.Fatal("expected error from publish failure")
+	}
+
+	saved, readErr := manifest.Read(mPath)
+	if readErr != nil {
+		t.Fatalf("read saved manifest: %v", readErr)
+	}
+	if saved.State != manifest.StateError {
+		t.Fatalf("state = %q, want %q", saved.State, manifest.StateError)
+	}
+	if saved.Publishing == nil || !saved.Publishing.R2Cleaned {
+		t.Fatal("expected r2_cleaned=true when cleanup_on_failure=always")
+	}
+	if len(memHost.Deleted) != 1 {
+		t.Fatalf("deleted=%d, want 1", len(memHost.Deleted))
 	}
 }
 

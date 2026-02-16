@@ -435,13 +435,6 @@ func (m Model) renderDetail(w, h int) string {
 			post.Enrichment.Location.Name+" ("+post.Enrichment.Location.Source+")")
 	}
 
-	// Music
-	if post.Enrichment != nil && post.Enrichment.MusicSuggestion != nil {
-		ms := post.Enrichment.MusicSuggestion
-		sections = append(sections, dimStyle.Render("Music")+"\n"+
-			ms.Artist+" — "+ms.Title+" ("+ms.Mood+")")
-	}
-
 	// Story toggle
 	storyState := "OFF"
 	if post.Review != nil && post.Review.StoryEnabled {

@@ -125,19 +125,10 @@ type Location struct {
 	FallbackUsed          bool   `json:"fallback_used"`
 }
 
-// MusicSuggestion holds the AI-suggested music track.
-type MusicSuggestion struct {
-	Artist      string    `json:"artist"`
-	Title       string    `json:"title"`
-	Mood        string    `json:"mood,omitempty"`
-	GeneratedAt time.Time `json:"generated_at"`
-}
-
 // Enrichment holds all AI-generated metadata.
 type Enrichment struct {
-	Caption         *Caption         `json:"caption,omitempty"`
-	Location        *Location        `json:"location,omitempty"`
-	MusicSuggestion *MusicSuggestion `json:"music_suggestion,omitempty"`
+	Caption  *Caption  `json:"caption,omitempty"`
+	Location *Location `json:"location,omitempty"`
 }
 
 // Review holds the user's review decision.

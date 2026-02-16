@@ -1,5 +1,5 @@
 // Package enricher orchestrates AI-powered metadata generation for posts:
-// caption generation, location identification, and music suggestion.
+// caption generation and location identification.
 package enricher
 
 import (
@@ -21,7 +21,6 @@ import (
 // Options controls which enrichment components to run.
 type Options struct {
 	SkipLocation bool
-	SkipMusic    bool
 	CorpusPath   string
 	LogOutput    io.Writer
 }
@@ -123,36 +122,6 @@ func (e *Enricher) Enrich(ctx context.Context, m *manifest.Manifest) error {
 				locationStep,
 				nil,
 				details,
-			)
-		}
-	}
-
-	// 3. Music suggestion (unless skipped)
-	if !e.opts.SkipMusic {
-		musicStep := obslog.Intent(
-			e.logger,
-			"enricher",
-			m.ID,
-			m.ID,
-			"extract_music",
-			"suggest matching music based on hero image and context",
-			map[string]any{"provider": e.providerName()},
-		)
-		music, err := e.suggestMusic(ctx, m, hero, enrichment.Location)
-		if err != nil {
-			obslog.Result(e.logger, "enricher", m.ID, m.ID, "extract_music", musicStep, err, nil)
-			e.logger.Printf("WARN: music suggestion failed: %v", err)
-		} else {
-			enrichment.MusicSuggestion = music
-			obslog.Result(
-				e.logger,
-				"enricher",
-				m.ID,
-				m.ID,
-				"extract_music",
-				musicStep,
-				nil,
-				map[string]any{"artist": music.Artist, "title": music.Title, "mood": music.Mood},
 			)
 		}
 	}
@@ -467,105 +436,6 @@ func parseLocationResponse(text string) (*locationResponse, error) {
 		return nil, fmt.Errorf("invalid JSON: %w\nraw response: %s", err, text)
 	}
 	return &loc, nil
-}
-
-// --- Music Suggestion ---
-
-type musicResponse struct {
-	Artist    string `json:"artist"`
-	Title     string `json:"title"`
-	Mood      string `json:"mood"`
-	Reasoning string `json:"reasoning"`
-}
-
-func (e *Enricher) suggestMusic(ctx context.Context, m *manifest.Manifest, hero *manifest.Image, location *manifest.Location) (*manifest.MusicSuggestion, error) {
-	captureTime := "unknown"
-	captureDate := "unknown"
-	if hero.EXIF.CaptureDate != nil {
-		captureTime = hero.EXIF.CaptureDate.Format("15:04")
-		captureDate = hero.EXIF.CaptureDate.Format("2006-01-02")
-		hour := hero.EXIF.CaptureDate.Hour()
-		switch {
-		case hour < 6:
-			captureTime = fmt.Sprintf("night (%s)", captureTime)
-		case hour < 12:
-			captureTime = fmt.Sprintf("morning (%s)", captureTime)
-		case hour < 17:
-			captureTime = fmt.Sprintf("afternoon (%s)", captureTime)
-		case hour < 21:
-			captureTime = fmt.Sprintf("evening (%s)", captureTime)
-		default:
-			captureTime = fmt.Sprintf("night (%s)", captureTime)
-		}
-	}
-
-	locationHint := "unknown"
-	if location != nil {
-		locationHint = location.Name
-	}
-
-	systemPrompt := `You are a music curator for a photography Instagram account. Given a photograph, suggest a single music track that matches its mood, atmosphere, and emotional tone.
-
-RULES:
-- Suggest exactly one track (artist + title).
-- The track should be findable on major streaming platforms (Spotify, Apple Music) and ideally available in Instagram's music library.
-- Prefer ambient, instrumental, post-classical, electronic, or atmospheric music. The account focuses on architecture, urban landscapes, and liminal spaces.
-- Match the energy: contemplative images get quiet tracks, dramatic images get more dynamic ones.
-- Avoid mainstream pop unless the image has unusually energetic or vibrant energy.
-- Include a short mood description (2–4 words) explaining the match.`
-
-	userPrompt := fmt.Sprintf(`Suggest a music track for this photograph.
-
-CONTEXT:
-- Capture time: %s (%s)
-- Location: %s
-- Photography style: architecture, urban, liminal
-
-Respond in this exact JSON format:
-{
-  "artist": "Olafur Arnalds",
-  "title": "Near Light",
-  "mood": "contemplative, atmospheric",
-  "reasoning": "The misty bridge scene at dusk matches the quiet tension in this piece"
-}
-
-If you cannot suggest a fitting track, set artist, title, and mood to null.`, captureTime, captureDate, locationHint)
-
-	resp, err := e.provider.Generate(ctx, ai.Request{
-		SystemPrompt: systemPrompt,
-		UserPrompt:   userPrompt,
-		ImagePaths:   []string{hero.Path},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("AI music call: %w", err)
-	}
-
-	music, err := parseMusicResponse(resp.Text)
-	if err != nil {
-		return nil, fmt.Errorf("parse music response: %w", err)
-	}
-
-	if music.Artist == "" || music.Title == "" {
-		return nil, nil
-	}
-
-	return &manifest.MusicSuggestion{
-		Artist:      music.Artist,
-		Title:       music.Title,
-		Mood:        music.Mood,
-		GeneratedAt: time.Now().UTC(),
-	}, nil
-}
-
-func parseMusicResponse(text string) (*musicResponse, error) {
-	text = strings.TrimSpace(text)
-	text = extractJSON(text)
-
-	var music musicResponse
-	if err := json.Unmarshal([]byte(text), &music); err != nil {
-		return nil, fmt.Errorf("invalid JSON: %w\nraw response: %s", err, text)
-	}
-	return &music, nil
 }
 
 // --- Helpers ---
