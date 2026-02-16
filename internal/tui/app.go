@@ -663,6 +663,10 @@ func (m *AppModel) publishSelected() tea.Cmd {
 		m.statusMsg = "Publisher not configured (need R2 + Instagram env vars)"
 		return nil
 	}
+	if err := m.preparePostForPublish(post); err != nil {
+		m.statusMsg = fmt.Sprintf("Retry setup failed: %v", err)
+		return nil
+	}
 	m.publishing = post.Manifest.ID
 	m.statusMsg = fmt.Sprintf("Publishing: %s...", post.Manifest.ID)
 	return runPublish(m.pub, post.Path)
@@ -676,13 +680,46 @@ func (m *AppModel) publishAllQueued() tea.Cmd {
 		m.statusMsg = "Publisher not configured (need R2 + Instagram env vars)"
 		return nil
 	}
-	m.publishing = m.queuePosts[0].Manifest.ID
-	m.statusMsg = fmt.Sprintf("Publishing %d posts...", len(m.queuePosts))
 	var cmds []tea.Cmd
-	for _, post := range m.queuePosts {
+	firstID := ""
+	for i := range m.queuePosts {
+		post := &m.queuePosts[i]
+		if err := m.preparePostForPublish(post); err != nil {
+			m.appendRuntimeLog(fmt.Sprintf("[runtime] Skip %s: %v", post.Manifest.ID, err))
+			continue
+		}
+		if firstID == "" {
+			firstID = post.Manifest.ID
+		}
 		cmds = append(cmds, runPublish(m.pub, post.Path))
 	}
+	if len(cmds) == 0 {
+		m.statusMsg = "No publishable posts in queue"
+		return nil
+	}
+	m.publishing = firstID
+	m.statusMsg = fmt.Sprintf("Publishing %d posts...", len(cmds))
 	return tea.Batch(cmds...)
+}
+
+func (m *AppModel) preparePostForPublish(post *PostEntry) error {
+	if post == nil || post.Manifest == nil {
+		return fmt.Errorf("no post selected")
+	}
+	man := post.Manifest
+	if man.State != manifest.StateError {
+		return nil
+	}
+	if man.Review == nil || man.Review.Decision != "approved" {
+		return fmt.Errorf("post in error state is not approved")
+	}
+	// Allow retry from queue by restoring approved state first.
+	man.State = manifest.StateApproved
+	man.Errors = nil
+	if err := man.Write(post.Path); err != nil {
+		return fmt.Errorf("write manifest before retry: %w", err)
+	}
+	return nil
 }
 
 // --- Selectors ---
@@ -851,9 +888,13 @@ func (m AppModel) renderQueuePanel(w, h int) string {
 	for i, post := range m.queuePosts {
 		name := truncate(post.Manifest.ID, w-10)
 		imgCount := fmt.Sprintf("[%d]", len(post.Manifest.Images))
-		line := fmt.Sprintf("  %s %s", name, imgCount)
+		prefix := "  "
+		if post.Manifest.State == manifest.StateError {
+			prefix = "! "
+		}
+		line := fmt.Sprintf("%s%s %s", prefix, name, imgCount)
 		if i == m.queueCursor && m.activePanel == PanelQueue {
-			line = selectedItemStyle.Render(fmt.Sprintf("▸ %s %s", name, imgCount))
+			line = selectedItemStyle.Render(fmt.Sprintf("▸ %s%s %s", strings.TrimSpace(prefix), name, imgCount))
 		}
 		lines = append(lines, line)
 	}
@@ -1015,6 +1056,16 @@ func (m AppModel) renderPostDetail(post *PostEntry, w int, showActions bool) str
 	sections = append(sections, "")
 	sections = append(sections, labelStyle.Render("Story")+"  "+storyState)
 
+	sections = append(sections, "")
+	sections = append(sections, labelStyle.Render("State"))
+	sections = append(sections, string(man.State))
+
+	if len(man.Errors) > 0 {
+		sections = append(sections, "")
+		sections = append(sections, labelStyle.Render("Last Error"))
+		sections = append(sections, truncate(man.Errors[len(man.Errors)-1], maxInt(20, w-4)))
+	}
+
 	// Actions
 	if showActions {
 		sections = append(sections, "")
@@ -1026,7 +1077,11 @@ func (m AppModel) renderPostDetail(post *PostEntry, w int, showActions bool) str
 	} else {
 		sections = append(sections, "")
 		sections = append(sections, dimTextStyle.Render("─── Actions ───"))
-		sections = append(sections, "p  Publish now      P  Publish all")
+		if man.State == manifest.StateError {
+			sections = append(sections, "p  Retry publish    P  Retry all")
+		} else {
+			sections = append(sections, "p  Publish now      P  Publish all")
+		}
 		sections = append(sections, "d  Remove from queue")
 	}
 

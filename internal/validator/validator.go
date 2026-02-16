@@ -13,7 +13,7 @@ import (
 const (
 	// Instagram carousel limits.
 	MinImages = 1
-	MaxImages = 20
+	MaxImages = 10
 
 	SeverityError   = "error"
 	SeverityWarning = "warning"

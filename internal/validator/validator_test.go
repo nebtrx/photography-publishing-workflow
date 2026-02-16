@@ -108,7 +108,7 @@ func TestValidate_DuplicateSuffix(t *testing.T) {
 
 func TestValidate_TooManyImages(t *testing.T) {
 	m := manifest.New("big-post", "/tmp/big-post")
-	for i := 1; i <= 25; i++ {
+	for i := 1; i <= 11; i++ {
 		m.Images = append(m.Images, manifest.Image{
 			Filename:    "img.jpg",
 			Width:       800,
@@ -124,7 +124,7 @@ func TestValidate_TooManyImages(t *testing.T) {
 		t.Error("expected image count to be invalid")
 	}
 	if v.Passed {
-		t.Error("expected validation to fail for >20 images")
+		t.Error("expected validation to fail for >10 images")
 	}
 }
 

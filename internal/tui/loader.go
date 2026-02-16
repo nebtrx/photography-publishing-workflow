@@ -22,7 +22,7 @@ func (m *AppModel) loadData() {
 	m.loadPublishedLog()
 }
 
-// loadPendingAndQueue scans the watch directory for pending_review and approved manifests.
+// loadPendingAndQueue scans the watch directory for review/queue candidates.
 func (m *AppModel) loadPendingAndQueue() {
 	dir := m.cfg.Watch.Dir
 	if dir == "" {
@@ -47,10 +47,10 @@ func (m *AppModel) loadPendingAndQueue() {
 			continue
 		}
 
-		switch man.State {
-		case manifest.StatePendingReview:
+		switch {
+		case man.State == manifest.StatePendingReview:
 			pending = append(pending, PostEntry{Manifest: man, Path: mPath})
-		case manifest.StateApproved, manifest.StateScheduled:
+		case shouldDisplayInQueue(man):
 			queue = append(queue, PostEntry{Manifest: man, Path: mPath})
 		}
 	}
@@ -65,6 +65,17 @@ func (m *AppModel) loadPendingAndQueue() {
 
 	m.pendingPosts = pending
 	m.queuePosts = queue
+}
+
+func shouldDisplayInQueue(man *manifest.Manifest) bool {
+	switch man.State {
+	case manifest.StateApproved, manifest.StateScheduled:
+		return true
+	case manifest.StateError:
+		return man.Review != nil && man.Review.Decision == "approved"
+	default:
+		return false
+	}
 }
 
 // loadPublishedLog reads the JSONL publish log and groups entries by month.

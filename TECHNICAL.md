@@ -908,3 +908,52 @@ Store value indicated `meta.user_expires_at` was written near current time.
 - `/opt/homebrew/bin/go test ./cmd/ppw -count=1` passed
 - `/opt/homebrew/bin/go test ./...` passed
 - rebuilt binary; `./bin/ppw logs --post-id rotterdam-surprise-snow --outcome failure --since 24h` now returns failures.
+
+## 2026-02-16 — Publish failure recovery + carousel hard-limit enforcement
+**Context:** Instagram publish failed with `Meta API 400 code=9004` while attempting a 12-image post; failed posts in `state=error` (with `review.decision=approved`) disappeared from actionable TUI panels.
+
+**Diagnosis:**
+- Runtime manifest had `12` images. Instagram carousel hard limit is `10`.
+- Validator still allowed up to `20`, so oversized posts could reach publish step.
+- TUI loader only displayed `pending_review`, `approved`, and `scheduled`; retryable publish errors were hidden.
+
+**Implemented:**
+- `internal/validator/validator.go`
+  - Updated `MaxImages` from `20` to `10`.
+- `internal/publisher/publisher.go`
+  - Added preflight guard in `Publish(...)`:
+    - if image count > 10, fail with explicit message
+    - persist error via `setError(...)` before any upload/publish API calls.
+  - Added retry bootstrap:
+    - if manifest is `state=error` and still `review.decision=approved`, auto-restore to `approved` before publish attempt.
+- `internal/tui/loader.go`
+  - Queue now includes `state=error` manifests when `review.decision == "approved"` (retryable publish failures).
+- `internal/tui/app.go`
+  - Queue list marks errored items with `!`.
+  - Detail pane now shows `State` + `Last Error`.
+  - Queue actions show `Retry publish` labels for errored posts.
+  - `p`/`P` now auto-prepare retry by restoring `state=approved` from `state=error` before invoking publisher.
+  - Retry prep clears stale `errors` and rewrites manifest.
+- Added tests:
+  - `internal/publisher/publisher_test.go`: `TestPublish_TooManyCarouselImages_SetsError`, `TestPublish_RetryFromErrorStateWhenApproved`
+  - `internal/tui/loader_test.go`: queue inclusion for retryable errors + retry state recovery
+  - `internal/validator/validator_test.go`: updated too-many-images case (>10)
+
+**Validation:**
+- `/opt/homebrew/bin/go mod tidy`
+- `/opt/homebrew/bin/go test ./...` passed
+- `make build` passed
+
+## 2026-02-16 — Orchestration prepared: dead-letter panel + stage-aware retry + published leaf counters
+**Context:** User requested DOE artifacts only (no implementation yet) for:
+- dedicated failed/dead-letter panel
+- retry from failed stage
+- published panel counter fix (`x of y` should count leaf posts only).
+
+**Prepared artifacts:**
+- `directives/dead_letter_retry_and_published_counter_fix.md`
+- `directives/orchestration_dead_letter_retry_and_published_counter_fix.md`
+
+**Status:**
+- Orchestration complete.
+- Execution intentionally deferred to next session.

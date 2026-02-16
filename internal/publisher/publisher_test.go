@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -383,6 +384,68 @@ func TestPublish_TokenVerifyFails(t *testing.T) {
 	}
 	if m.State != manifest.StateApproved {
 		t.Errorf("state should remain approved on preflight failure, got %q", m.State)
+	}
+}
+
+func TestPublish_TooManyCarouselImages_SetsError(t *testing.T) {
+	m, mPath := setupApprovedManifest(t)
+	// Force above Instagram carousel hard limit.
+	for i := len(m.Images); i < 11; i++ {
+		clone := m.Images[0]
+		clone.Filename = fmt.Sprintf("extra_%d.jpg", i)
+		clone.Path = filepath.Join(filepath.Dir(mPath), clone.Filename)
+		m.Images = append(m.Images, clone)
+	}
+	if err := m.Write(mPath); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	mockIG := newMockInstagram()
+	pub := New(hosting.NewMemoryHost(), mockIG, Options{})
+
+	err := pub.Publish(context.Background(), m, mPath)
+	if err == nil {
+		t.Fatal("expected carousel limit error")
+	}
+	if !strings.Contains(err.Error(), "at most 10 images") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	saved, readErr := manifest.Read(mPath)
+	if readErr != nil {
+		t.Fatalf("read saved manifest: %v", readErr)
+	}
+	if saved.State != manifest.StateError {
+		t.Errorf("state = %q, want %q", saved.State, manifest.StateError)
+	}
+	if len(saved.Errors) == 0 {
+		t.Fatal("expected manifest errors to be recorded")
+	}
+	if mockIG.CreateChildCalls != 0 || mockIG.PublishCalls != 0 {
+		t.Fatalf("expected no publish API calls, got child=%d publish=%d", mockIG.CreateChildCalls, mockIG.PublishCalls)
+	}
+}
+
+func TestPublish_RetryFromErrorStateWhenApproved(t *testing.T) {
+	m, mPath := setupApprovedManifest(t)
+	m.Images = m.Images[:1]
+	m.State = manifest.StateError
+	m.Errors = []string{"previous failure"}
+	if err := m.Write(mPath); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	pub := New(hosting.NewMemoryHost(), newMockInstagram(), Options{})
+	if err := pub.Publish(context.Background(), m, mPath); err != nil {
+		t.Fatalf("Publish retry from error: %v", err)
+	}
+
+	saved, err := manifest.Read(mPath)
+	if err != nil {
+		t.Fatalf("read saved manifest: %v", err)
+	}
+	if saved.State != manifest.StatePublished {
+		t.Fatalf("state = %q, want %q", saved.State, manifest.StatePublished)
 	}
 }
 

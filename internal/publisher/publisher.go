@@ -34,6 +34,7 @@ type InstagramAPI interface {
 const (
 	pollInterval = 5 * time.Second
 	maxPolls     = 60
+	maxCarousel  = 10
 )
 
 // Publisher orchestrates the publishing flow.
@@ -83,6 +84,16 @@ func New(host hosting.Host, ig InstagramAPI, opts Options) *Publisher {
 // Publish executes the full publishing flow for a manifest.
 // Supports resuming from a partially failed "publishing" state.
 func (p *Publisher) Publish(ctx context.Context, m *manifest.Manifest, manifestPath string) error {
+	// Retry convenience: allow re-running publish on previously approved posts
+	// that failed and ended in error state.
+	if m.State == manifest.StateError && m.Review != nil && m.Review.Decision == "approved" {
+		m.State = manifest.StateApproved
+		m.Errors = nil
+		if err := m.Write(manifestPath); err != nil {
+			return fmt.Errorf("write manifest before retry: %w", err)
+		}
+	}
+
 	// 1. Validate state
 	if m.State != manifest.StateApproved && m.State != manifest.StatePublishing {
 		return fmt.Errorf("manifest state is %q, expected %q or %q", m.State, manifest.StateApproved, manifest.StatePublishing)
@@ -94,6 +105,15 @@ func (p *Publisher) Publish(ctx context.Context, m *manifest.Manifest, manifestP
 
 	if len(m.Images) == 0 {
 		return fmt.Errorf("manifest has no images")
+	}
+	if len(m.Images) > maxCarousel {
+		err := fmt.Errorf(
+			"instagram carousel supports at most %d images, found %d (split this post or reduce images)",
+			maxCarousel,
+			len(m.Images),
+		)
+		p.setError(m, manifestPath, err)
+		return err
 	}
 
 	// Initialize publishing section if needed
