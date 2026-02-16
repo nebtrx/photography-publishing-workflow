@@ -957,3 +957,19 @@ Store value indicated `meta.user_expires_at` was written near current time.
 **Status:**
 - Orchestration complete.
 - Execution intentionally deferred to next session.
+
+## 2026-02-16 — Additional orchestration prepared: Enter defaults + publish `code=9004` bug package
+**Context:** User requested two more pending directive packages (no execution):
+1. Simplify keyboard flow with context-aware default action bound to `Enter`.
+2. Diagnose/fix recurring publish failure:
+   - `create child container 1 ... Meta API 400 ... code=9004`.
+
+**Prepared artifacts:**
+- `directives/default_enter_actions_and_shortcuts.md`
+- `directives/orchestration_default_enter_actions_and_shortcuts.md`
+- `directives/publish_code9004_child_container_failure.md`
+- `directives/orchestration_publish_code9004_child_container_failure.md`
+
+**Status:**
+- Orchestration artifacts created.
+- Execution intentionally deferred.
