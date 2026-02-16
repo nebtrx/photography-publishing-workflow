@@ -87,3 +87,31 @@ func TestReadOutputFile_EmptyFile(t *testing.T) {
 		t.Fatalf("readOutputFile = %q, want empty", got)
 	}
 }
+
+func TestBuildCodexArgs_NoImages(t *testing.T) {
+	args := buildCodexArgs("gpt-5.2", nil, "/tmp/out.txt")
+	got := strings.Join(args, " ")
+	if !strings.Contains(got, "--model gpt-5.2") {
+		t.Fatalf("args missing model: %q", got)
+	}
+	if !strings.Contains(got, "--output-last-message /tmp/out.txt") {
+		t.Fatalf("args missing output path: %q", got)
+	}
+	if !strings.HasSuffix(got, "-- -") {
+		t.Fatalf("args should end with '-- -', got: %q", got)
+	}
+}
+
+func TestBuildCodexArgs_WithImages(t *testing.T) {
+	args := buildCodexArgs("", []string{"/tmp/a.jpg", "/tmp/b.jpg"}, "/tmp/out.txt")
+	got := strings.Join(args, " ")
+	if strings.Contains(got, "--image /tmp/a.jpg,/tmp/b.jpg") {
+		t.Fatalf("args should not pass comma-joined images: %q", got)
+	}
+	if !strings.Contains(got, "--image /tmp/a.jpg") || !strings.Contains(got, "--image /tmp/b.jpg") {
+		t.Fatalf("args should include each image separately: %q", got)
+	}
+	if !strings.HasSuffix(got, "-- -") {
+		t.Fatalf("args should end with '-- -', got: %q", got)
+	}
+}

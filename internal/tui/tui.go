@@ -190,7 +190,7 @@ func (m Model) updateEditMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if post.Review == nil {
 				post.Review = &manifest.Review{}
 			}
-			post.Review.FinalCaption = m.editor.Value()
+			post.Review.FinalCaption = normalizeCaptionText(m.editor.Value())
 			post.Review.CaptionEdited = true
 			m.writeManifest(m.cursor)
 			m.statusMsg = successStyle.Render("Caption saved")
@@ -493,10 +493,10 @@ func (m Model) renderStatusBar(w int) string {
 
 func currentCaption(post *manifest.Manifest) string {
 	if post.Review != nil && post.Review.FinalCaption != "" {
-		return post.Review.FinalCaption
+		return normalizeCaptionText(post.Review.FinalCaption)
 	}
 	if post.Enrichment != nil && post.Enrichment.Caption != nil {
-		return post.Enrichment.Caption.Text
+		return normalizeCaptionText(post.Enrichment.Caption.Text)
 	}
 	return ""
 }

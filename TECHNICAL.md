@@ -850,3 +850,44 @@ Store value indicated `meta.user_expires_at` was written near current time.
 **Validation:**
 - `/opt/homebrew/bin/go test ./internal/tui -count=1` passed
 - `/opt/homebrew/bin/go test ./...` passed
+
+## 2026-02-16 — Codex AI prompt ingestion fix (`No prompt provided via stdin`)
+**Context:** Pipeline enrichment with `provider=codex` failed for caption/location/music with:
+`Reading prompt from stdin... No prompt provided via stdin.`
+
+**Root cause:**
+- Codex CLI `exec` supports variadic `--image <FILE>...`.
+- Previous adapter passed `--image` as one comma-joined argument and provided prompt as positional text.
+- Variadic parsing could consume positional prompt unexpectedly, leaving no prompt and forcing empty stdin.
+
+**Implemented:**
+- `internal/ai/codex_cli.go`
+  - prompt now always passed via stdin (`cmd.Stdin = strings.NewReader(fullPrompt)`)
+  - CLI args now end with `-- -` to explicitly request stdin prompt mode
+  - image args now emitted one-by-one (`--image <path>`), not comma-joined
+  - extracted `buildCodexArgs(...)` helper
+- `internal/ai/codex_cli_test.go`
+  - added coverage for argument construction:
+    - no-images case
+    - multi-image case (separate `--image` flags + `-- -` suffix)
+
+**Validation:**
+- `/opt/homebrew/bin/go test ./internal/ai -count=1` passed
+- `/opt/homebrew/bin/go test ./...` passed
+- `make build` passed
+
+## 2026-02-16 — Caption editor line hygiene (remove accidental trailing blank line)
+**Context:** Edit-caption overlay displayed an extra blank numbered line due to trailing newline persisted in `review.final_caption`.
+
+**Implemented:**
+- Added `internal/tui/caption.go` with `normalizeCaptionText(...)`.
+- Applied normalization on save in both TUI implementations:
+  - `internal/tui/app.go` (unified TUI)
+  - `internal/tui/tui.go` (legacy review TUI)
+- Applied normalization when reading caption for editor/detail (`currentCaption`).
+- Added tests:
+  - `internal/tui/caption_test.go`
+
+**Validation:**
+- `/opt/homebrew/bin/go test ./internal/tui -count=1` passed
+- `/opt/homebrew/bin/go test ./...` passed

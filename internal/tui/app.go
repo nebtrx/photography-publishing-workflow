@@ -431,7 +431,7 @@ func (m AppModel) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if post.Review == nil {
 				post.Review = &manifest.Review{}
 			}
-			post.Review.FinalCaption = m.editor.Value()
+			post.Review.FinalCaption = normalizeCaptionText(m.editor.Value())
 			post.Review.CaptionEdited = true
 			post.Write(m.editingPost.Path)
 			m.statusMsg = "Caption saved"

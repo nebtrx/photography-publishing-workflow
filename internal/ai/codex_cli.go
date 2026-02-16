@@ -33,6 +33,9 @@ func (c *CodexCLI) Name() string { return "codex-cli" }
 
 // Generate invokes the codex CLI in exec (non-interactive) mode with the given
 // prompt and images. Uses --sandbox read-only to prevent file modifications.
+//
+// Prompt is passed via stdin ("-") instead of positional args to avoid
+// ambiguity with variadic --image parsing.
 func (c *CodexCLI) Generate(ctx context.Context, req Request) (*Response, error) {
 	if _, err := exec.LookPath(c.BinaryPath); err != nil {
 		return nil, fmt.Errorf("codex CLI not found at %q: %w (install: npm i -g @openai/codex && codex login)", c.BinaryPath, err)
@@ -49,28 +52,12 @@ func (c *CodexCLI) Generate(ctx context.Context, req Request) (*Response, error)
 	tmpFile.Close()
 	defer os.Remove(outputPath)
 
-	args := []string{
-		"exec",
-		"--sandbox", "read-only",
-		"--skip-git-repo-check",
-		"--output-last-message", outputPath,
-	}
-
-	if c.Model != "" {
-		args = append(args, "--model", c.Model)
-	}
-
-	// Attach images
-	if len(req.ImagePaths) > 0 {
-		args = append(args, "--image", strings.Join(req.ImagePaths, ","))
-	}
-
-	// Prompt goes as the final positional argument
-	args = append(args, fullPrompt)
+	args := buildCodexArgs(c.Model, req.ImagePaths, outputPath)
 
 	cmd := exec.CommandContext(ctx, c.BinaryPath, args...)
 	// Run from a temp dir so codex doesn't try to read a project
 	cmd.Dir = os.TempDir()
+	cmd.Stdin = strings.NewReader(fullPrompt)
 
 	stdoutBytes, err := cmd.Output()
 	if err != nil {
@@ -103,6 +90,32 @@ func (c *CodexCLI) Generate(ctx context.Context, req Request) (*Response, error)
 		Text:  text,
 		Model: model,
 	}, nil
+}
+
+func buildCodexArgs(model string, imagePaths []string, outputPath string) []string {
+	args := []string{
+		"exec",
+		"--sandbox", "read-only",
+		"--skip-git-repo-check",
+		"--output-last-message", outputPath,
+	}
+
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+
+	// Pass each image independently; variadic --image parsing can otherwise
+	// swallow the prompt positional argument.
+	for _, p := range imagePaths {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		args = append(args, "--image", p)
+	}
+
+	// Stop option parsing and request prompt from stdin explicitly.
+	return append(args, "--", "-")
 }
 
 // buildCodexPrompt combines system and user prompts into a single string,
