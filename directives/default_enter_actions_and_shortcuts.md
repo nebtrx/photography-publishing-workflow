@@ -53,15 +53,18 @@ Make the TUI easier/faster to operate by introducing a clear default action mode
   - Enter should map to modal primary CTA only.
 
 ## Acceptance Criteria
-- [ ] `Enter` saves caption in editor overlay.
-- [ ] `Enter` in approve dialog performs queue/default approval action.
-- [ ] `Enter` in queue panel publishes selected queued post.
-- [ ] Existing shortcuts continue to work.
-- [ ] Help/action hints clearly indicate default Enter action.
-- [ ] Tests cover Enter mapping across contexts.
+- [x] `Enter` saves caption in editor overlay.
+- [x] `Enter` in approve dialog performs queue/default approval action.
+- [x] `Enter` in queue panel publishes selected queued post.
+- [x] Existing shortcuts continue to work.
+- [x] Help/action hints clearly indicate default Enter action.
+- [x] Tests cover Enter mapping across contexts.
 
 ## Safety Notes
 - Destructive operations (reject/remove/dequeue) must not become implicit Enter defaults.
 
 ## Learnings (append-only)
 - Add discoveries during execution (best newline fallback, ergonomic conflicts, legacy path mismatches).
+- Newline fallback implemented as `Alt+Enter` / `Shift+Enter` while reserving plain `Enter` for save in editor overlays.
+- Default actions are now explicit in dialog copy and help overlays (queue default in approval dialog, confirm default in publish-all dialog).
+- Added focused regression tests in `internal/tui/enter_actions_test.go` to lock Enter behavior across contexts.

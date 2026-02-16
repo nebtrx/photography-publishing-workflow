@@ -36,6 +36,7 @@ func (m *AppModel) loadPendingAndQueue() {
 
 	var pending []PostEntry
 	var queue []PostEntry
+	var deadLetter []PostEntry
 
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -50,6 +51,8 @@ func (m *AppModel) loadPendingAndQueue() {
 		switch {
 		case man.State == manifest.StatePendingReview:
 			pending = append(pending, PostEntry{Manifest: man, Path: mPath})
+		case man.State == manifest.StateError:
+			deadLetter = append(deadLetter, PostEntry{Manifest: man, Path: mPath})
 		case shouldDisplayInQueue(man):
 			queue = append(queue, PostEntry{Manifest: man, Path: mPath})
 		}
@@ -62,17 +65,29 @@ func (m *AppModel) loadPendingAndQueue() {
 	sort.Slice(queue, func(i, j int) bool {
 		return queue[i].Manifest.ID < queue[j].Manifest.ID
 	})
+	sort.Slice(deadLetter, func(i, j int) bool {
+		return deadLetter[i].Manifest.ID < deadLetter[j].Manifest.ID
+	})
 
 	m.pendingPosts = pending
 	m.queuePosts = queue
+	m.deadLetterPosts = deadLetter
+
+	if m.pendingCursor >= len(m.pendingPosts) && m.pendingCursor > 0 {
+		m.pendingCursor = len(m.pendingPosts) - 1
+	}
+	if m.queueCursor >= len(m.queuePosts) && m.queueCursor > 0 {
+		m.queueCursor = len(m.queuePosts) - 1
+	}
+	if m.deadCursor >= len(m.deadLetterPosts) && m.deadCursor > 0 {
+		m.deadCursor = len(m.deadLetterPosts) - 1
+	}
 }
 
 func shouldDisplayInQueue(man *manifest.Manifest) bool {
 	switch man.State {
 	case manifest.StateApproved, manifest.StateScheduled:
 		return true
-	case manifest.StateError:
-		return man.Review != nil && man.Review.Decision == "approved"
 	default:
 		return false
 	}
@@ -156,6 +171,12 @@ func (m *AppModel) loadPublishedLog() {
 	}
 
 	m.logGroups = groups
+	if m.logCursor >= m.logFlatCount() && m.logCursor > 0 {
+		m.logCursor = m.logFlatCount() - 1
+	}
+	if m.logCursor < 0 {
+		m.logCursor = 0
+	}
 }
 
 func extractMonth(publishedAt string) string {

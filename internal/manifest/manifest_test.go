@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestNew(t *testing.T) {
@@ -37,6 +38,10 @@ func TestTransition_Valid(t *testing.T) {
 		{StateApproved, StatePublishing},
 		{StatePublishing, StatePublished},
 		{StatePublished, StateArchived},
+		{StateError, StateScanned},
+		{StateError, StateValidated},
+		{StateError, StateApproved},
+		{StateError, StatePublished},
 	}
 
 	for _, tt := range tests {
@@ -125,5 +130,96 @@ func TestManifestPath(t *testing.T) {
 	want := filepath.Join("/foo/bar/my-post", "manifest.json")
 	if got != want {
 		t.Errorf("ManifestPath = %q, want %q", got, want)
+	}
+}
+
+func TestRetryStateForFailureStage(t *testing.T) {
+	tests := []struct {
+		stage FailureStage
+		want  State
+	}{
+		{FailureStageScan, StateScanned},
+		{FailureStageValidate, StateScanned},
+		{FailureStageEnrich, StateValidated},
+		{FailureStagePublish, StateApproved},
+		{FailureStageArchive, StatePublished},
+		{FailureStageSyndicate, StatePublished},
+		{FailureStage("unknown"), StateScanned},
+	}
+
+	for _, tt := range tests {
+		if got := RetryStateForFailureStage(tt.stage); got != tt.want {
+			t.Fatalf("RetryStateForFailureStage(%q) = %q, want %q", tt.stage, got, tt.want)
+		}
+	}
+}
+
+func TestRecordFailureAndPrepareRetry(t *testing.T) {
+	m := New("retry-test", "/tmp/retry-test")
+	m.State = StatePublishing
+	m.RecordFailure(FailureStagePublish, "publish failed", StateApproved)
+
+	if m.State != StateError {
+		t.Fatalf("state = %q, want %q", m.State, StateError)
+	}
+	if m.Failure == nil {
+		t.Fatal("failure metadata should be set")
+	}
+	if got := m.Failure.RetryFromState; got != StateApproved {
+		t.Fatalf("retry_from_state = %q, want %q", got, StateApproved)
+	}
+	if len(m.Errors) == 0 {
+		t.Fatal("errors should append failure message")
+	}
+
+	stage, err := m.PrepareRetry()
+	if err != nil {
+		t.Fatalf("PrepareRetry: %v", err)
+	}
+	if stage != FailureStagePublish {
+		t.Fatalf("stage = %q, want %q", stage, FailureStagePublish)
+	}
+	if m.State != StateApproved {
+		t.Fatalf("state = %q, want %q", m.State, StateApproved)
+	}
+	if m.Failure != nil {
+		t.Fatal("failure metadata should be cleared after retry prep")
+	}
+}
+
+func TestPrepareRetryLegacyInference(t *testing.T) {
+	m := New("legacy", "/tmp/legacy")
+	m.State = StateError
+	m.Review = &Review{Decision: "approved"}
+
+	stage, err := m.PrepareRetry()
+	if err != nil {
+		t.Fatalf("PrepareRetry: %v", err)
+	}
+	if stage != FailureStagePublish {
+		t.Fatalf("stage = %q, want %q", stage, FailureStagePublish)
+	}
+	if m.State != StateApproved {
+		t.Fatalf("state = %q, want %q", m.State, StateApproved)
+	}
+}
+
+func TestEffectiveFailureStageArchiveInference(t *testing.T) {
+	m := New("legacy-archive", "/tmp/legacy-archive")
+	m.State = StateError
+	m.Publishing = &Publishing{
+		InstagramPostID: "123",
+		PublishedAt:     time.Now().UTC(),
+	}
+	if got := m.EffectiveFailureStage(); got != FailureStageArchive {
+		t.Fatalf("EffectiveFailureStage = %q, want %q", got, FailureStageArchive)
+	}
+}
+
+func TestPrepareRetryRequiresErrorState(t *testing.T) {
+	m := New("bad", "/tmp/bad")
+	m.State = StateApproved
+	if _, err := m.PrepareRetry(); err == nil {
+		t.Fatal("expected error when preparing retry outside error state")
 	}
 }

@@ -69,6 +69,10 @@ func (a *Archiver) Archive(m *manifest.Manifest, manifestPath string) error {
 	if m.State != manifest.StatePublished {
 		return fmt.Errorf("manifest state is %q, expected %q", m.State, manifest.StatePublished)
 	}
+	fail := func(err error) error {
+		a.recordArchiveFailure(m, manifestPath, err)
+		return err
+	}
 
 	// Determine archive subdirectory: <archive-dir>/<YYYY-MM>/<post-id>/
 	publishDate := m.Publishing.PublishedAt
@@ -84,14 +88,14 @@ func (a *Archiver) Archive(m *manifest.Manifest, manifestPath string) error {
 
 	// Create archive subdirectory
 	if err := os.MkdirAll(archiveSubdir, 0o755); err != nil {
-		return fmt.Errorf("create archive dir %s: %w", archiveSubdir, err)
+		return fail(fmt.Errorf("create archive dir %s: %w", archiveSubdir, err))
 	}
 
 	// Move each image to the archive
 	for _, img := range m.Images {
 		dst := filepath.Join(archiveSubdir, img.Filename)
 		if err := moveFile(img.Path, dst); err != nil {
-			return fmt.Errorf("move %s → %s: %w", img.Path, dst, err)
+			return fail(fmt.Errorf("move %s → %s: %w", img.Path, dst, err))
 		}
 		a.logger.Printf("Moved %s → %s", img.Filename, dst)
 	}
@@ -108,13 +112,13 @@ func (a *Archiver) Archive(m *manifest.Manifest, manifestPath string) error {
 
 	// Transition state
 	if err := m.Transition(manifest.StateArchived); err != nil {
-		return fmt.Errorf("transition to archived: %w", err)
+		return fail(fmt.Errorf("transition to archived: %w", err))
 	}
 
 	// Write manifest to archive
 	archiveManifestPath := filepath.Join(archiveSubdir, "manifest.json")
 	if err := m.Write(archiveManifestPath); err != nil {
-		return fmt.Errorf("write archived manifest: %w", err)
+		return fail(fmt.Errorf("write archived manifest: %w", err))
 	}
 
 	// Append log entry
@@ -136,6 +140,16 @@ func (a *Archiver) Archive(m *manifest.Manifest, manifestPath string) error {
 
 	a.logger.Printf("Archived %s → %s (%d images)", m.ID, archiveSubdir, len(m.Images))
 	return nil
+}
+
+func (a *Archiver) recordArchiveFailure(m *manifest.Manifest, manifestPath string, archiveErr error) {
+	if m == nil || archiveErr == nil {
+		return
+	}
+	m.RecordFailure(manifest.FailureStageArchive, archiveErr.Error(), manifest.StatePublished)
+	if err := m.Write(manifestPath); err != nil {
+		a.logger.Printf("Warning: failed to write manifest after archive error: %v", err)
+	}
 }
 
 // dryRunArchive logs what would happen without doing it.

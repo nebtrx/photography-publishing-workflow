@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -31,6 +32,18 @@ const (
 	StateError         State = "error"
 )
 
+// FailureStage identifies which pipeline stage most recently failed.
+type FailureStage string
+
+const (
+	FailureStageScan      FailureStage = "scan"
+	FailureStageValidate  FailureStage = "validate"
+	FailureStageEnrich    FailureStage = "enrich"
+	FailureStagePublish   FailureStage = "publish"
+	FailureStageArchive   FailureStage = "archive"
+	FailureStageSyndicate FailureStage = "syndicate"
+)
+
 // validTransitions defines which state transitions are allowed.
 var validTransitions = map[State][]State{
 	StateScanned:       {StateValidated, StateError},
@@ -42,7 +55,7 @@ var validTransitions = map[State][]State{
 	StatePublishing:    {StatePublished, StateError},
 	StateScheduled:     {StatePublishing, StateApproved, StateError}, // approved = unschedule
 	StatePublished:     {StateArchived, StateError},
-	StateError:         {StateScanned}, // re-scan to retry
+	StateError:         {StateScanned, StateValidated, StateApproved, StatePublished}, // stage-aware retry
 }
 
 // GPS holds latitude and longitude.
@@ -191,6 +204,14 @@ type Archival struct {
 	LogEntryWritten bool      `json:"log_entry_written"`
 }
 
+// Failure tracks the latest terminal failure details for dead-letter handling.
+type Failure struct {
+	Stage          FailureStage `json:"stage"`
+	Message        string       `json:"message"`
+	OccurredAt     time.Time    `json:"occurred_at"`
+	RetryFromState State        `json:"retry_from_state"`
+}
+
 // Manifest is the top-level post manifest.
 type Manifest struct {
 	Version    int         `json:"version"`
@@ -206,6 +227,7 @@ type Manifest struct {
 	Publishing *Publishing `json:"publishing,omitempty"`
 	Scheduling *Scheduling `json:"scheduling,omitempty"`
 	Archival   *Archival   `json:"archival,omitempty"`
+	Failure    *Failure    `json:"failure,omitempty"`
 	Errors     []string    `json:"errors,omitempty"`
 }
 
@@ -282,4 +304,106 @@ func Read(path string) (*Manifest, error) {
 // ManifestPath returns the default manifest file path for a post directory.
 func ManifestPath(postDir string) string {
 	return filepath.Join(postDir, "manifest.json")
+}
+
+// RetryStateForFailureStage returns the recommended retry state for a failure stage.
+func RetryStateForFailureStage(stage FailureStage) State {
+	switch stage {
+	case FailureStageScan:
+		return StateScanned
+	case FailureStageValidate:
+		return StateScanned
+	case FailureStageEnrich:
+		return StateValidated
+	case FailureStagePublish:
+		return StateApproved
+	case FailureStageArchive:
+		return StatePublished
+	case FailureStageSyndicate:
+		return StatePublished
+	default:
+		return StateScanned
+	}
+}
+
+// RecordFailure records failure metadata, appends history, and moves the manifest to error state.
+func (m *Manifest) RecordFailure(stage FailureStage, message string, retryFrom State) {
+	msg := strings.TrimSpace(message)
+	now := time.Now().UTC()
+	if retryFrom == "" {
+		retryFrom = RetryStateForFailureStage(stage)
+	}
+
+	m.Failure = &Failure{
+		Stage:          stage,
+		Message:        msg,
+		OccurredAt:     now,
+		RetryFromState: retryFrom,
+	}
+
+	if msg != "" {
+		m.Errors = append(m.Errors, msg)
+	}
+
+	if m.State != StateError {
+		if err := m.Transition(StateError); err != nil {
+			// Keep metadata even if transition isn't permitted.
+			m.UpdatedAt = now
+		}
+	} else {
+		m.UpdatedAt = now
+	}
+}
+
+// ClearFailure clears dead-letter metadata after a successful retry.
+func (m *Manifest) ClearFailure() {
+	m.Failure = nil
+}
+
+// EffectiveFailureStage returns the best-known failure stage, including legacy inference.
+func (m *Manifest) EffectiveFailureStage() FailureStage {
+	if m != nil && m.Failure != nil && m.Failure.Stage != "" {
+		return m.Failure.Stage
+	}
+	if m != nil {
+		// Legacy inference for older manifests without structured failure metadata.
+		if m.Review != nil && strings.EqualFold(m.Review.Decision, "approved") {
+			return FailureStagePublish
+		}
+		if m.Publishing != nil {
+			if !m.Publishing.PublishedAt.IsZero() || m.Publishing.InstagramPostID != "" {
+				return FailureStageArchive
+			}
+		}
+	}
+	return FailureStageScan
+}
+
+// EffectiveRetryState returns the retry state using structured metadata when available.
+func (m *Manifest) EffectiveRetryState() State {
+	if m != nil && m.Failure != nil && m.Failure.RetryFromState != "" {
+		return m.Failure.RetryFromState
+	}
+	return RetryStateForFailureStage(m.EffectiveFailureStage())
+}
+
+// PrepareRetry restores a failed manifest to its stage-appropriate retry state.
+func (m *Manifest) PrepareRetry() (FailureStage, error) {
+	if m == nil {
+		return "", fmt.Errorf("manifest is nil")
+	}
+	if m.State != StateError {
+		return "", fmt.Errorf("retry requires state %q, got %q", StateError, m.State)
+	}
+
+	stage := m.EffectiveFailureStage()
+	retryState := m.EffectiveRetryState()
+	if retryState == "" {
+		retryState = RetryStateForFailureStage(stage)
+	}
+	if err := m.Transition(retryState); err != nil {
+		return "", fmt.Errorf("transition to retry state %q: %w", retryState, err)
+	}
+	m.ClearFailure()
+	return stage, nil
 }

@@ -280,6 +280,11 @@ func (w *Watcher) isErroredPost(dir string) (bool, string) {
 }
 
 func manifestErrorReason(m *manifest.Manifest) string {
+	if m != nil && m.Failure != nil {
+		if msg := strings.TrimSpace(m.Failure.Message); msg != "" {
+			return msg
+		}
+	}
 	if len(m.Errors) > 0 {
 		return strings.TrimSpace(m.Errors[len(m.Errors)-1])
 	}

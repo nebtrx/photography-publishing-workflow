@@ -117,12 +117,13 @@ Execute `directives/dead_letter_retry_and_published_counter_fix.md` with clear w
 ## Resume Checklist (for execution session)
 - [x] Directive created
 - [x] Orchestration plan created
-- [ ] Implement WS1 schema + transitions
-- [ ] Implement WS2 failure capture
-- [ ] Implement WS3 retry engine
-- [ ] Implement WS4 dead-letter panel
-- [ ] Implement WS5 published leaf counter fix
-- [ ] Run WS6 verification + update TECHNICAL log
+- [x] Implement WS1 schema + transitions
+- [x] Implement WS2 failure capture
+- [x] Implement WS3 retry engine
+- [x] Implement WS4 dead-letter panel
+- [x] Implement WS5 published leaf counter fix
+- [x] Run WS6 verification + update TECHNICAL log
 
 ## Learnings (append-only)
 - Add findings during execution (state migration pitfalls, retry edge cases, TUI interaction improvements).
+- Failure stage metadata and retry intent now live in manifest-level primitives (`RecordFailure`, `PrepareRetry`) and are reused by pipeline/publisher/archiver/TUI.

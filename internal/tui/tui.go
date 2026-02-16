@@ -183,7 +183,7 @@ func (m Model) updateEditMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.statusMsg = "Edit cancelled"
 		return m, nil
 
-	case "ctrl+s":
+	case "enter", "ctrl+s":
 		// Save edited caption
 		post := m.currentPost()
 		if post != nil {
@@ -196,6 +196,9 @@ func (m Model) updateEditMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.statusMsg = successStyle.Render("Caption saved")
 		}
 		m.mode = modeList
+		return m, nil
+	case "shift+enter", "alt+enter":
+		m.editor.InsertString("\n")
 		return m, nil
 	}
 
@@ -215,7 +218,7 @@ func (m *Model) enterEditMode() (Model, tea.Cmd) {
 	m.editor.SetValue(caption)
 	m.editor.Focus()
 	m.mode = modeEdit
-	m.statusMsg = "Editing caption (Ctrl+S save, Esc cancel)"
+	m.statusMsg = "Editing caption (Enter save, Shift+Enter newline, Esc cancel)"
 	return *m, textarea.Blink
 }
 
@@ -463,7 +466,7 @@ func (m Model) renderDetail(w, h int) string {
 
 func (m Model) renderEditor(w, h int) string {
 	var sections []string
-	sections = append(sections, dimStyle.Render("Edit Caption (Ctrl+S save, Esc cancel)"))
+	sections = append(sections, dimStyle.Render("Edit Caption (Enter save, Shift+Enter newline, Esc cancel)"))
 	sections = append(sections, m.editor.View())
 
 	charCount := len(m.editor.Value())

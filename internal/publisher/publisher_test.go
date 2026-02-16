@@ -3,6 +3,7 @@ package publisher
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -631,6 +632,12 @@ func TestPublish_PublishError_SetsErrorState(t *testing.T) {
 	if len(saved.Errors) == 0 {
 		t.Error("errors should be recorded")
 	}
+	if saved.Failure == nil {
+		t.Fatal("failure metadata should be recorded")
+	}
+	if saved.Failure.Stage != manifest.FailureStagePublish {
+		t.Fatalf("failure.stage = %q, want %q", saved.Failure.Stage, manifest.FailureStagePublish)
+	}
 }
 
 func TestPublish_Syndication_Success(t *testing.T) {
@@ -727,5 +734,42 @@ func TestPublish_Syndication_StrictFailure(t *testing.T) {
 	}
 	if len(saved.Errors) == 0 {
 		t.Error("strict failure should append manifest error")
+	}
+	if saved.Failure == nil {
+		t.Fatal("failure metadata should be present")
+	}
+	if saved.Failure.Stage != manifest.FailureStageSyndicate {
+		t.Fatalf("failure.stage = %q, want %q", saved.Failure.Stage, manifest.FailureStageSyndicate)
+	}
+}
+
+func TestPublish_PreflightRejectsInvalidLocalMedia(t *testing.T) {
+	m, mPath := setupApprovedManifest(t)
+	m.Images = m.Images[:1]
+	if err := m.Write(mPath); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(m.Images[0].Path, []byte("not a jpeg"), 0o644); err != nil {
+		t.Fatalf("overwrite test image: %v", err)
+	}
+
+	pub := New(hosting.NewMemoryHost(), newMockInstagram(), Options{})
+	err := pub.Publish(context.Background(), m, mPath)
+	if err == nil {
+		t.Fatal("expected preflight failure")
+	}
+	if !strings.Contains(err.Error(), "media preflight") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	saved, readErr := manifest.Read(mPath)
+	if readErr != nil {
+		t.Fatalf("read saved manifest: %v", readErr)
+	}
+	if saved.State != manifest.StateError {
+		t.Fatalf("state = %q, want %q", saved.State, manifest.StateError)
+	}
+	if saved.Failure == nil || saved.Failure.Stage != manifest.FailureStagePublish {
+		t.Fatalf("failure metadata = %#v, want stage=%q", saved.Failure, manifest.FailureStagePublish)
 	}
 }

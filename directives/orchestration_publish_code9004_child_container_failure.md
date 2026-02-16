@@ -101,11 +101,12 @@ Execute `directives/publish_code9004_child_container_failure.md` with a reproduc
 ## Resume Checklist (for execution session)
 - [x] Directive created
 - [x] Orchestration created
-- [ ] Implement WS1 reproduction matrix
-- [ ] Implement WS2 preflight verification
-- [ ] Implement WS3 diagnostics
-- [ ] Implement WS4 guardrails/retry compatibility
-- [ ] Run WS5 verification + memory update
+- [x] Implement WS1 reproduction matrix
+- [x] Implement WS2 preflight verification
+- [x] Implement WS3 diagnostics
+- [x] Implement WS4 guardrails/retry compatibility
+- [x] Run WS5 verification + memory update
 
 ## Learnings (append-only)
 - Add confirmed platform quirks and the final root cause signature during execution.
+- Added deterministic local-media preflight and per-child diagnostics to surface `code=9004` causes before/at container creation.

@@ -973,3 +973,69 @@ Store value indicated `meta.user_expires_at` was written near current time.
 **Status:**
 - Orchestration artifacts created.
 - Execution intentionally deferred.
+
+## 2026-02-16 — Executed pending directive set (dead-letter retry, Enter defaults, publish diagnostics)
+**Context:** Implemented the previously-orchestrated directives together:
+- `dead_letter_retry_and_published_counter_fix`
+- `default_enter_actions_and_shortcuts`
+- `publish_code9004_child_container_failure`
+
+**Implemented:**
+- Manifest failure model + retry primitives:
+  - `internal/manifest/manifest.go`
+    - added `Failure` metadata (`stage`, `message`, `occurred_at`, `retry_from_state`)
+    - added `RecordFailure`, `EffectiveFailureStage`, `EffectiveRetryState`, `PrepareRetry`, `ClearFailure`
+    - expanded `state=error` transitions for stage-aware retry targets (`scanned|validated|approved|published`)
+  - tests added/updated in `internal/manifest/manifest_test.go`.
+- Failure capture by stage:
+  - `internal/pipeline/pipeline.go`
+    - validation failures now stop pipeline deterministically (no enrich after blocked validation)
+    - failure metadata recorded with `stage=validate`/`stage=enrich`.
+  - `internal/publisher/publisher.go`
+    - `setError` now records structured failure stages (`publish` / `syndicate`)
+    - retry bootstrap uses `PrepareRetry()` for errored approved manifests.
+  - `internal/archiver/archiver.go`
+    - archival failures now record `stage=archive` before returning.
+  - `internal/watcher/watcher.go`
+    - watcher reason text now prefers `manifest.failure.message`.
+- Dead-letter workflow in unified TUI:
+  - `internal/tui/app.go`
+    - added panel `[4]-Failed` and moved published to `[5]`
+    - failed posts now render in dedicated panel + detail shows stage/retry state/last error
+    - `r` retries from failed stage (pipeline/publish/archive runner selected by stage)
+    - queue `Enter` now publishes selected post (default action).
+  - `internal/tui/loader.go`
+    - queue now only includes `approved|scheduled`
+    - `state=error` manifests are loaded into `deadLetterPosts`.
+- Published counter fix:
+  - `internal/tui/app.go`
+    - `publishedCounter()` now uses leaf-only math (`publishedLeafCount`, `publishedLeafCursor`)
+    - month headers no longer inflate `x of y`.
+- Enter-default UX:
+  - `internal/tui/app.go`
+    - editor: `Enter` save, `Alt+Enter` / `Shift+Enter` newline fallback
+    - approve dialog: `Enter` defaults to queue
+    - publish-all dialog: `Enter` defaults to confirm
+    - help/action hints updated accordingly.
+  - legacy review TUI parity:
+    - `internal/tui/tui.go` editor now supports same Enter/newline behavior.
+- Publish `code=9004` diagnostics + preflight:
+  - `internal/publisher/publisher.go`
+    - added per-media preflight (`preflightMedia`):
+      - local decode + local content-type check
+      - remote probe (status/content-type) where applicable
+    - child/single container failures now include index + filename + path + URL + media diagnostics.
+    - explicit hint added when Meta returns `code=9004`.
+    - remote probe is skipped for test/dry-run URLs (`test.r2.dev`, `dry-run.r2.dev`) to keep deterministic tests.
+
+**Tests added/updated:**
+- `internal/tui/enter_actions_test.go` (new)
+- `internal/tui/loader_test.go`
+- `internal/manifest/manifest_test.go`
+- `internal/pipeline/pipeline_test.go`
+- `internal/publisher/publisher_test.go`
+
+**Validation:**
+- `gofmt -w` on all touched files
+- `/opt/homebrew/bin/go mod tidy`
+- `/opt/homebrew/bin/go test ./...` passed

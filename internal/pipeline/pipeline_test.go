@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
+	"path/filepath"
 	"testing"
 
 	"photography-publishing-workflow/internal/ai"
@@ -120,5 +122,39 @@ func TestPipeline_SkipOptions(t *testing.T) {
 	// Should have made only 1 AI call
 	if len(mockProvider.Calls) != 1 {
 		t.Errorf("AI calls = %d, want 1", len(mockProvider.Calls))
+	}
+}
+
+func TestPipeline_ValidationFailureRecordsFailureMetadata(t *testing.T) {
+	dir := t.TempDir()
+	if err := testutil.SetupSamplePost(dir); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	// Add enough images to violate carousel max.
+	for i := 0; i < 10; i++ {
+		testutil.CreateJPEG(filepath.Join(dir, fmt.Sprintf("extra_%d.jpg", i)), 1080, 1350)
+	}
+
+	p := New(ai.NewMock("unused"), Options{})
+	result := p.Run(context.Background(), dir)
+	if result.Error == nil {
+		t.Fatal("expected validation error")
+	}
+	m, err := manifest.Read(result.ManifestPath)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	if m.State != manifest.StateError {
+		t.Fatalf("state = %q, want %q", m.State, manifest.StateError)
+	}
+	if m.Failure == nil {
+		t.Fatal("failure metadata should be present")
+	}
+	if m.Failure.Stage != manifest.FailureStageValidate {
+		t.Fatalf("failure.stage = %q, want %q", m.Failure.Stage, manifest.FailureStageValidate)
+	}
+	if m.Failure.RetryFromState != manifest.StateScanned {
+		t.Fatalf("failure.retry_from_state = %q, want %q", m.Failure.RetryFromState, manifest.StateScanned)
 	}
 }

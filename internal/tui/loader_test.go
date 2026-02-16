@@ -29,33 +29,44 @@ func TestLoadPendingAndQueue_IncludesRetryableErrorPosts(t *testing.T) {
 		t.Fatalf("pending[0] = %q, want pending", got)
 	}
 
-	if got, want := len(m.queuePosts), 2; got != want {
+	if got, want := len(m.queuePosts), 1; got != want {
 		t.Fatalf("queue count = %d, want %d", got, want)
 	}
 	if got := m.queuePosts[0].Manifest.ID; got != "approved" {
 		t.Fatalf("queue[0] = %q, want approved", got)
 	}
-	if got := m.queuePosts[1].Manifest.ID; got != "err-approved" {
-		t.Fatalf("queue[1] = %q, want err-approved", got)
+
+	if got, want := len(m.deadLetterPosts), 2; got != want {
+		t.Fatalf("dead-letter count = %d, want %d", got, want)
+	}
+	if got := m.deadLetterPosts[0].Manifest.ID; got != "err-approved" {
+		t.Fatalf("deadLetter[0] = %q, want err-approved", got)
+	}
+	if got := m.deadLetterPosts[1].Manifest.ID; got != "err-other" {
+		t.Fatalf("deadLetter[1] = %q, want err-other", got)
 	}
 }
 
-func TestPreparePostForPublish_RecoversErrorState(t *testing.T) {
+func TestPreparePostForRetry_RecoversErrorState(t *testing.T) {
 	root := t.TempDir()
 	manifestPath := writeManifest(t, root, "retry-me", manifest.StateError, "approved")
 	man, err := manifest.Read(manifestPath)
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}
-	man.Errors = []string{"old error"}
+	man.RecordFailure(manifest.FailureStagePublish, "old error", manifest.StateApproved)
 	if err := man.Write(manifestPath); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 
 	model := AppModel{}
 	post := &PostEntry{Manifest: man, Path: manifestPath}
-	if err := model.preparePostForPublish(post); err != nil {
-		t.Fatalf("preparePostForPublish: %v", err)
+	stage, err := model.preparePostForRetry(post)
+	if err != nil {
+		t.Fatalf("preparePostForRetry: %v", err)
+	}
+	if stage != manifest.FailureStagePublish {
+		t.Fatalf("stage = %q, want %q", stage, manifest.FailureStagePublish)
 	}
 
 	reloaded, err := manifest.Read(manifestPath)
@@ -65,8 +76,44 @@ func TestPreparePostForPublish_RecoversErrorState(t *testing.T) {
 	if reloaded.State != manifest.StateApproved {
 		t.Fatalf("state = %q, want %q", reloaded.State, manifest.StateApproved)
 	}
-	if len(reloaded.Errors) != 0 {
-		t.Fatalf("errors should be cleared, got %v", reloaded.Errors)
+	if reloaded.Failure != nil {
+		t.Fatalf("failure should be cleared, got %#v", reloaded.Failure)
+	}
+}
+
+func TestPreparePostForRetry_PublishRetryRequiresApproval(t *testing.T) {
+	root := t.TempDir()
+	manifestPath := writeManifest(t, root, "retry-me", manifest.StateError, "")
+	man, err := manifest.Read(manifestPath)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	man.RecordFailure(manifest.FailureStagePublish, "publish failed", manifest.StateApproved)
+	if err := man.Write(manifestPath); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	model := AppModel{}
+	post := &PostEntry{Manifest: man, Path: manifestPath}
+	if _, err := model.preparePostForRetry(post); err == nil {
+		t.Fatal("expected retry setup error for missing approval")
+	}
+}
+
+func TestPublishedCounter_UsesLeafEntriesOnly(t *testing.T) {
+	model := AppModel{
+		logGroups: []LogGroup{
+			{Month: "2026-02", Entries: []LogDisplayEntry{{ID: "a"}, {ID: "b"}}},
+			{Month: "2026-01", Entries: []LogDisplayEntry{{ID: "c"}}, Collapsed: true},
+		},
+		logCursor: 0, // header row
+	}
+	if got := model.publishedCounter(); got != "1 of 3" {
+		t.Fatalf("counter at header = %q, want 1 of 3", got)
+	}
+	model.logCursor = 2 // second leaf in first group
+	if got := model.publishedCounter(); got != "2 of 3" {
+		t.Fatalf("counter at leaf = %q, want 2 of 3", got)
 	}
 }
 

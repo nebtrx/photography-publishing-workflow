@@ -87,10 +87,11 @@ Execute `directives/default_enter_actions_and_shortcuts.md` with minimal regress
 ## Resume Checklist (for execution session)
 - [x] Directive created
 - [x] Orchestration created
-- [ ] Implement WS1 contract
-- [ ] Implement WS2 key handling
-- [ ] Implement WS3 hints/docs
-- [ ] Run WS4 tests and update memory
+- [x] Implement WS1 contract
+- [x] Implement WS2 key handling
+- [x] Implement WS3 hints/docs
+- [x] Run WS4 tests and update memory
 
 ## Learnings (append-only)
 - Add execution findings (newline ergonomics, context conflicts, fallback choices).
+- `Enter` defaults are now context-driven and explicit in UI copy; multiline editing preserved via `Alt+Enter` / `Shift+Enter`.

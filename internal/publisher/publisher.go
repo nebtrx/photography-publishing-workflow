@@ -6,8 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/jpeg"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -42,6 +45,7 @@ type Publisher struct {
 	host              hosting.Host
 	ig                InstagramAPI
 	logger            *log.Logger
+	httpClient        *http.Client
 	dryRun            bool
 	enableFacebook    bool
 	enableThreads     bool
@@ -59,6 +63,19 @@ type Options struct {
 	Facebook          FacebookSyndicator
 	Threads           ThreadsSyndicator
 	LogOutput         io.Writer
+	HTTPClient        *http.Client
+}
+
+type mediaCandidate struct {
+	Index             int
+	Filename          string
+	LocalPath         string
+	URL               string
+	LocalContentType  string
+	RemoteStatusCode  int
+	RemoteContentType string
+	Width             int
+	Height            int
 }
 
 // New creates a new Publisher.
@@ -72,6 +89,7 @@ func New(host hosting.Host, ig InstagramAPI, opts Options) *Publisher {
 		host:              host,
 		ig:                ig,
 		logger:            log.New(logOutput, "[publish] ", log.LstdFlags),
+		httpClient:        defaultHTTPClient(opts.HTTPClient),
 		dryRun:            opts.DryRun,
 		enableFacebook:    opts.EnableFacebook,
 		enableThreads:     opts.EnableThreads,
@@ -81,14 +99,22 @@ func New(host hosting.Host, ig InstagramAPI, opts Options) *Publisher {
 	}
 }
 
+func defaultHTTPClient(c *http.Client) *http.Client {
+	if c != nil {
+		return c
+	}
+	return &http.Client{Timeout: 15 * time.Second}
+}
+
 // Publish executes the full publishing flow for a manifest.
 // Supports resuming from a partially failed "publishing" state.
 func (p *Publisher) Publish(ctx context.Context, m *manifest.Manifest, manifestPath string) error {
 	// Retry convenience: allow re-running publish on previously approved posts
 	// that failed and ended in error state.
 	if m.State == manifest.StateError && m.Review != nil && m.Review.Decision == "approved" {
-		m.State = manifest.StateApproved
-		m.Errors = nil
+		if _, err := m.PrepareRetry(); err != nil {
+			return fmt.Errorf("prepare retry: %w", err)
+		}
 		if err := m.Write(manifestPath); err != nil {
 			return fmt.Errorf("write manifest before retry: %w", err)
 		}
@@ -112,7 +138,7 @@ func (p *Publisher) Publish(ctx context.Context, m *manifest.Manifest, manifestP
 			maxCarousel,
 			len(m.Images),
 		)
-		p.setError(m, manifestPath, err)
+		p.setError(m, manifestPath, manifest.FailureStagePublish, err)
 		return err
 	}
 
@@ -164,7 +190,14 @@ func (p *Publisher) Publish(ctx context.Context, m *manifest.Manifest, manifestP
 
 	// 3. Upload images to R2
 	if err := p.uploadImages(ctx, m, manifestPath); err != nil {
+		p.setError(m, manifestPath, manifest.FailureStagePublish, err)
 		return fmt.Errorf("upload images: %w", err)
+	}
+
+	mediaCandidates, err := p.preflightMedia(ctx, m)
+	if err != nil {
+		p.setError(m, manifestPath, manifest.FailureStagePublish, err)
+		return fmt.Errorf("media preflight: %w", err)
 	}
 
 	// 4. Transition to publishing (if not already resuming)
@@ -193,9 +226,9 @@ func (p *Publisher) Publish(ctx context.Context, m *manifest.Manifest, manifestP
 		"publish approved post to instagram feed",
 		map[string]any{"image_count": len(m.Images)},
 	)
-	if err := p.createAndPublish(ctx, m, manifestPath, caption, locationID); err != nil {
+	if err := p.createAndPublish(ctx, m, manifestPath, caption, locationID, mediaCandidates); err != nil {
 		obslog.Result(p.logger, "publisher", m.ID, m.ID, "publish_instagram", instagramStart, err, nil)
-		p.setError(m, manifestPath, err)
+		p.setError(m, manifestPath, manifest.FailureStagePublish, err)
 		return err
 	}
 	obslog.Result(
@@ -220,7 +253,7 @@ func (p *Publisher) Publish(ctx context.Context, m *manifest.Manifest, manifestP
 	// 9. Optional syndication (facebook / threads)
 	if err := p.syndicate(ctx, m, manifestPath, caption); err != nil {
 		if p.strictSyndication {
-			p.setError(m, manifestPath, err)
+			p.setError(m, manifestPath, manifest.FailureStageSyndicate, err)
 			return err
 		}
 		p.logger.Printf("Warning: syndication failed: %v", err)
@@ -288,6 +321,186 @@ func (p *Publisher) uploadImages(ctx context.Context, m *manifest.Manifest, mani
 	return nil
 }
 
+func (p *Publisher) preflightMedia(ctx context.Context, m *manifest.Manifest) ([]mediaCandidate, error) {
+	if m == nil || m.Publishing == nil {
+		return nil, fmt.Errorf("missing publishing context for media preflight")
+	}
+	if len(m.Images) != len(m.Publishing.R2URLs) {
+		return nil, fmt.Errorf("media preflight mismatch: images=%d r2_urls=%d", len(m.Images), len(m.Publishing.R2URLs))
+	}
+
+	out := make([]mediaCandidate, 0, len(m.Images))
+	for i, img := range m.Images {
+		url := m.Publishing.R2URLs[i]
+		start := obslog.Intent(
+			p.logger,
+			"publisher",
+			m.ID,
+			m.ID,
+			"preflight_media",
+			"validate media candidate before instagram container creation",
+			map[string]any{
+				"index":    i + 1,
+				"filename": img.Filename,
+				"path":     img.Path,
+				"url":      url,
+			},
+		)
+
+		candidate, err := p.inspectMediaCandidate(ctx, i, img.Filename, img.Path, url)
+		if err != nil {
+			obslog.Result(p.logger, "publisher", m.ID, m.ID, "preflight_media", start, err, nil)
+			return nil, err
+		}
+		obslog.Result(
+			p.logger,
+			"publisher",
+			m.ID,
+			m.ID,
+			"preflight_media",
+			start,
+			nil,
+			map[string]any{
+				"index":                i + 1,
+				"filename":             candidate.Filename,
+				"local_type":           candidate.LocalContentType,
+				"remote_type":          candidate.RemoteContentType,
+				"remote_status":        candidate.RemoteStatusCode,
+				"width":                candidate.Width,
+				"height":               candidate.Height,
+				"remote_probe_skipped": p.dryRun || shouldSkipRemoteProbe(url),
+			},
+		)
+		out = append(out, candidate)
+	}
+
+	return out, nil
+}
+
+func (p *Publisher) inspectMediaCandidate(
+	ctx context.Context,
+	index int,
+	filename, localPath, publicURL string,
+) (mediaCandidate, error) {
+	c := mediaCandidate{
+		Index:     index,
+		Filename:  filename,
+		LocalPath: localPath,
+		URL:       publicURL,
+	}
+
+	localType, width, height, err := detectLocalImage(localPath)
+	if err != nil {
+		return c, fmt.Errorf("media candidate %d %s local check failed (%s): %w", index+1, filename, localPath, err)
+	}
+	c.LocalContentType = localType
+	c.Width = width
+	c.Height = height
+	if !strings.HasPrefix(localType, "image/") {
+		return c, fmt.Errorf("media candidate %d %s local content type is %q, expected image/*", index+1, filename, localType)
+	}
+
+	if p.dryRun {
+		c.RemoteStatusCode = 0
+		c.RemoteContentType = "dry-run"
+		return c, nil
+	}
+	if shouldSkipRemoteProbe(publicURL) {
+		c.RemoteStatusCode = 0
+		c.RemoteContentType = "probe-skipped"
+		return c, nil
+	}
+
+	status, remoteType, err := p.probeRemoteMedia(ctx, publicURL)
+	c.RemoteStatusCode = status
+	c.RemoteContentType = remoteType
+	if err != nil {
+		p.logger.Printf(
+			"Warning: remote probe failed for child %d (%s): %v",
+			index+1,
+			filename,
+			err,
+		)
+		return c, nil
+	}
+	if status < 200 || status >= 300 {
+		return c, fmt.Errorf("media candidate %d %s remote status=%d (%s)", index+1, filename, status, publicURL)
+	}
+	if !strings.HasPrefix(strings.ToLower(remoteType), "image/") {
+		return c, fmt.Errorf(
+			"media candidate %d %s remote content type is %q, expected image/* (%s)",
+			index+1,
+			filename,
+			remoteType,
+			publicURL,
+		)
+	}
+
+	return c, nil
+}
+
+func detectLocalImage(path string) (contentType string, width int, height int, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	defer f.Close()
+
+	sniff := make([]byte, 512)
+	n, readErr := f.Read(sniff)
+	if readErr != nil && readErr != io.EOF {
+		return "", 0, 0, readErr
+	}
+	contentType = http.DetectContentType(sniff[:n])
+
+	if _, err := f.Seek(0, 0); err != nil {
+		return "", 0, 0, err
+	}
+	cfg, _, err := image.DecodeConfig(f)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 {
+		return "", 0, 0, fmt.Errorf("invalid dimensions %dx%d", cfg.Width, cfg.Height)
+	}
+	return contentType, cfg.Width, cfg.Height, nil
+}
+
+func (p *Publisher) probeRemoteMedia(ctx context.Context, mediaURL string) (int, string, error) {
+	headReq, err := http.NewRequestWithContext(ctx, http.MethodHead, mediaURL, nil)
+	if err != nil {
+		return 0, "", err
+	}
+	resp, err := p.httpClient.Do(headReq)
+	if err == nil {
+		_ = resp.Body.Close()
+		ct := strings.TrimSpace(resp.Header.Get("Content-Type"))
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 && ct != "" {
+			return resp.StatusCode, ct, nil
+		}
+	}
+
+	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, mediaURL, nil)
+	if err != nil {
+		return 0, "", err
+	}
+	getReq.Header.Set("Range", "bytes=0-0")
+	resp, err = p.httpClient.Do(getReq)
+	if err != nil {
+		return 0, "", err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1))
+	ct := strings.TrimSpace(resp.Header.Get("Content-Type"))
+	return resp.StatusCode, ct, nil
+}
+
+func shouldSkipRemoteProbe(mediaURL string) bool {
+	u := strings.ToLower(strings.TrimSpace(mediaURL))
+	return strings.HasPrefix(u, "https://test.r2.dev/") ||
+		strings.HasPrefix(u, "https://dry-run.r2.dev/")
+}
+
 // resolveLocation searches for an Instagram location ID.
 func (p *Publisher) resolveLocation(m *manifest.Manifest) string {
 	if m.Enrichment == nil || m.Enrichment.Location == nil {
@@ -349,20 +562,32 @@ func (p *Publisher) resolveCaption(m *manifest.Manifest) string {
 }
 
 // createAndPublish creates media containers, polls, and publishes.
-func (p *Publisher) createAndPublish(ctx context.Context, m *manifest.Manifest, manifestPath, caption, locationID string) error {
+func (p *Publisher) createAndPublish(
+	ctx context.Context,
+	m *manifest.Manifest,
+	manifestPath, caption, locationID string,
+	candidates []mediaCandidate,
+) error {
 	if m.Publishing.ContainerIDs == nil {
 		m.Publishing.ContainerIDs = &manifest.ContainerIDs{}
 	}
 
 	if len(m.Images) == 1 {
-		return p.publishSingle(ctx, m, manifestPath, caption, locationID)
+		return p.publishSingle(ctx, m, manifestPath, caption, locationID, candidates)
 	}
-	return p.publishCarousel(ctx, m, manifestPath, caption, locationID)
+	return p.publishCarousel(ctx, m, manifestPath, caption, locationID, candidates)
 }
 
 // publishSingle handles single-image post publishing.
-func (p *Publisher) publishSingle(ctx context.Context, m *manifest.Manifest, manifestPath, caption, locationID string) error {
+func (p *Publisher) publishSingle(
+	ctx context.Context,
+	m *manifest.Manifest,
+	manifestPath, caption, locationID string,
+	candidates []mediaCandidate,
+) error {
+	_ = ctx
 	imageURL := m.Publishing.R2URLs[0]
+	candidate := candidateAt(candidates, 0)
 
 	// Create container (skip if already exists from previous run)
 	containerID := m.Publishing.ContainerIDs.Single
@@ -378,7 +603,16 @@ func (p *Publisher) publishSingle(ctx context.Context, m *manifest.Manifest, man
 		var err error
 		containerID, err = p.ig.CreateSingleContainer(imageURL, caption, locationID)
 		if err != nil {
-			return fmt.Errorf("create single container: %w", err)
+			return fmt.Errorf(
+				"create single container failed for %s (path=%s url=%s local_type=%s remote_type=%s remote_status=%d): %w",
+				candidate.Filename,
+				candidate.LocalPath,
+				candidate.URL,
+				candidate.LocalContentType,
+				candidate.RemoteContentType,
+				candidate.RemoteStatusCode,
+				err,
+			)
 		}
 		m.Publishing.ContainerIDs.Single = containerID
 		if err := m.Write(manifestPath); err != nil {
@@ -400,11 +634,18 @@ func (p *Publisher) publishSingle(ctx context.Context, m *manifest.Manifest, man
 }
 
 // publishCarousel handles carousel post publishing.
-func (p *Publisher) publishCarousel(ctx context.Context, m *manifest.Manifest, manifestPath, caption, locationID string) error {
+func (p *Publisher) publishCarousel(
+	ctx context.Context,
+	m *manifest.Manifest,
+	manifestPath, caption, locationID string,
+	candidates []mediaCandidate,
+) error {
+	_ = ctx
 	// Create child containers (skip already created ones for resume)
 	existingChildren := len(m.Publishing.ContainerIDs.Children)
 	for i := existingChildren; i < len(m.Images); i++ {
 		imageURL := m.Publishing.R2URLs[i]
+		candidate := candidateAt(candidates, i)
 
 		if p.dryRun {
 			p.logger.Printf("[DRY RUN] Would create child container %d: %s", i+1, imageURL)
@@ -413,7 +654,21 @@ func (p *Publisher) publishCarousel(ctx context.Context, m *manifest.Manifest, m
 
 		childID, err := p.ig.CreateChildContainer(imageURL)
 		if err != nil {
-			return fmt.Errorf("create child container %d: %w", i+1, err)
+			errText := fmt.Errorf(
+				"create child container %d failed for %s (path=%s url=%s local_type=%s remote_type=%s remote_status=%d): %w",
+				i+1,
+				candidate.Filename,
+				candidate.LocalPath,
+				candidate.URL,
+				candidate.LocalContentType,
+				candidate.RemoteContentType,
+				candidate.RemoteStatusCode,
+				err,
+			)
+			if strings.Contains(err.Error(), "code=9004") {
+				errText = fmt.Errorf("%w; hint: verify the URL serves image bytes (not HTML/403) and carousel has <=10 images", errText)
+			}
+			return errText
 		}
 		m.Publishing.ContainerIDs.Children = append(m.Publishing.ContainerIDs.Children, childID)
 
@@ -567,14 +822,34 @@ func (p *Publisher) cleanupKeys(ctx context.Context, keys []string) {
 	}
 }
 
-// setError transitions the manifest to error state and records the error.
-func (p *Publisher) setError(m *manifest.Manifest, manifestPath string, publishErr error) {
-	m.Errors = append(m.Errors, publishErr.Error())
-	if err := m.Transition(manifest.StateError); err != nil {
-		p.logger.Printf("Warning: failed to transition to error state: %v", err)
+// setError transitions the manifest to error state and records structured failure metadata.
+func (p *Publisher) setError(
+	m *manifest.Manifest,
+	manifestPath string,
+	stage manifest.FailureStage,
+	publishErr error,
+) {
+	if m == nil || publishErr == nil {
+		return
 	}
+	m.RecordFailure(stage, publishErr.Error(), manifest.RetryStateForFailureStage(stage))
 	if err := m.Write(manifestPath); err != nil {
 		p.logger.Printf("Warning: failed to write manifest after error: %v", err)
+	}
+}
+
+func candidateAt(candidates []mediaCandidate, idx int) mediaCandidate {
+	if idx >= 0 && idx < len(candidates) {
+		return candidates[idx]
+	}
+	return mediaCandidate{
+		Index:             idx,
+		Filename:          fmt.Sprintf("image_%d", idx+1),
+		LocalPath:         "",
+		URL:               "",
+		LocalContentType:  "unknown",
+		RemoteStatusCode:  0,
+		RemoteContentType: "unknown",
 	}
 }
 

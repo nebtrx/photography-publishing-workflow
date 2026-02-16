@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"photography-publishing-workflow/internal/ai"
 	"photography-publishing-workflow/internal/enricher"
@@ -130,8 +131,24 @@ func (p *Pipeline) Run(ctx context.Context, dir string) *Result {
 		map[string]any{"image_count": len(m.Images)},
 	)
 	if err := validator.Apply(m); err != nil {
+		m.RecordFailure(manifest.FailureStageValidate, err.Error(), manifest.StateScanned)
+		_ = m.Write(manifestPath)
 		obslog.Result(p.logger, "pipeline", postHint, postHint, "validate", validateStart, err, nil)
 		result.Error = fmt.Errorf("validate: %w", err)
+		result.FinalState = m.State
+		return result
+	}
+	if m.State == manifest.StateError {
+		validationErr := fmt.Errorf("%s", validationErrorSummary(m.Validation))
+		m.RecordFailure(manifest.FailureStageValidate, validationErr.Error(), manifest.StateScanned)
+		if err := m.Write(manifestPath); err != nil {
+			obslog.Result(p.logger, "pipeline", postHint, postHint, "validate", validateStart, err, nil)
+			result.Error = fmt.Errorf("write after validate failure: %w", err)
+			result.FinalState = m.State
+			return result
+		}
+		obslog.Result(p.logger, "pipeline", postHint, postHint, "validate", validateStart, validationErr, nil)
+		result.Error = validationErr
 		result.FinalState = m.State
 		return result
 	}
@@ -178,6 +195,8 @@ func (p *Pipeline) Run(ctx context.Context, dir string) *Result {
 	)
 	p.logger.Printf("Enriching %s...", m.ID)
 	if err := e.Enrich(ctx, m); err != nil {
+		m.RecordFailure(manifest.FailureStageEnrich, err.Error(), manifest.StateValidated)
+		_ = m.Write(manifestPath)
 		obslog.Result(p.logger, "pipeline", postHint, postHint, "enrich", enrichStart, err, nil)
 		result.Error = fmt.Errorf("enrich: %w", err)
 		result.FinalState = m.State
@@ -235,4 +254,23 @@ func validationSummary(v *manifest.Validation) string {
 		return "no validation"
 	}
 	return fmt.Sprintf("%d images, ratio=%s, passed=%v", v.ImageCount, v.ResolvedAspectRatio, v.Passed)
+}
+
+func validationErrorSummary(v *manifest.Validation) string {
+	if v == nil {
+		return "validation failed"
+	}
+	var issues []string
+	for _, issue := range v.Issues {
+		if strings.EqualFold(issue.Severity, "error") {
+			msg := strings.TrimSpace(issue.Message)
+			if msg != "" {
+				issues = append(issues, msg)
+			}
+		}
+	}
+	if len(issues) == 0 {
+		return "validation failed"
+	}
+	return "validation failed: " + strings.Join(issues, "; ")
 }

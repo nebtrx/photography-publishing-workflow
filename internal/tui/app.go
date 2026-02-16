@@ -23,15 +23,17 @@ const (
 	PanelConfig Panel = iota
 	PanelPending
 	PanelQueue
+	PanelDeadLetter
 	PanelPublished
-	panelCount = 4
+	panelCount = 5
 )
 
 const (
 	panelIndexConfig    = 1
 	panelIndexPending   = 2
 	panelIndexQueue     = 3
-	panelIndexPublished = 4
+	panelIndexDead      = 4
+	panelIndexPublished = 5
 )
 
 // Overlay identifies the current overlay state.
@@ -87,14 +89,16 @@ type AppModel struct {
 	cfgErr string // non-empty if config failed to load
 
 	// Panel state
-	activePanel  Panel
-	pendingPosts []PostEntry
-	queuePosts   []PostEntry
-	logGroups    []LogGroup
+	activePanel     Panel
+	pendingPosts    []PostEntry
+	queuePosts      []PostEntry
+	deadLetterPosts []PostEntry
+	logGroups       []LogGroup
 
 	// Cursors (per panel)
 	pendingCursor int
 	queueCursor   int
+	deadCursor    int
 	logCursor     int // flat index across all groups
 	imgCursor     int // image browser within selected post
 
@@ -291,6 +295,11 @@ func (m AppModel) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.statusMsg = ""
 		return m, nil
 	case "4":
+		m.activePanel = PanelDeadLetter
+		m.imgCursor = 0
+		m.statusMsg = ""
+		return m, nil
+	case "5":
 		m.activePanel = PanelPublished
 		m.imgCursor = 0
 		m.statusMsg = ""
@@ -305,6 +314,8 @@ func (m AppModel) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updatePending(msg)
 	case PanelQueue:
 		return m.updateQueue(msg)
+	case PanelDeadLetter:
+		return m.updateDeadLetter(msg)
 	case PanelPublished:
 		return m.updatePublished(msg)
 	}
@@ -378,10 +389,7 @@ func (m AppModel) updateQueue(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.imgCursor = 0
 		}
 	case "enter":
-		post := m.selectedQueue()
-		if post != nil && m.imgCursor < len(post.Manifest.Images) {
-			openFile(post.Manifest.Images[m.imgCursor].Path)
-		}
+		return m, m.publishSelected()
 	case "p":
 		cmd := m.publishSelected()
 		return m, cmd
@@ -391,6 +399,39 @@ func (m AppModel) updateQueue(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "d":
 		m.dequeuePost()
+	}
+	return m, nil
+}
+
+func (m AppModel) updateDeadLetter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		if m.deadCursor > 0 {
+			m.deadCursor--
+			m.imgCursor = 0
+		}
+	case "down", "j":
+		if m.deadCursor < len(m.deadLetterPosts)-1 {
+			m.deadCursor++
+			m.imgCursor = 0
+		}
+	case "left", "h":
+		if m.imgCursor > 0 {
+			m.imgCursor--
+		}
+	case "right", "l":
+		post := m.selectedDeadLetter()
+		if post != nil && m.imgCursor < len(post.Manifest.Images)-1 {
+			m.imgCursor++
+		}
+	case "enter":
+		post := m.selectedDeadLetter()
+		if post != nil && m.imgCursor < len(post.Manifest.Images) {
+			openFile(post.Manifest.Images[m.imgCursor].Path)
+			m.statusMsg = "Opened image in viewer"
+		}
+	case "r":
+		return m, m.retryDeadLetterPost()
 	}
 	return m, nil
 }
@@ -425,7 +466,7 @@ func (m AppModel) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.overlay = OverlayNone
 		m.statusMsg = "Edit cancelled"
 		return m, nil
-	case "ctrl+s":
+	case "enter", "ctrl+s":
 		if m.editingPost != nil {
 			post := m.editingPost.Manifest
 			if post.Review == nil {
@@ -437,6 +478,9 @@ func (m AppModel) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.statusMsg = "Caption saved"
 		}
 		m.overlay = OverlayNone
+		return m, nil
+	case "shift+enter", "alt+enter":
+		m.editor.InsertString("\n")
 		return m, nil
 	}
 	var cmd tea.Cmd
@@ -468,7 +512,7 @@ func (m AppModel) updateDialog(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.statusMsg = "Approved (publish manually - publisher not configured)"
 			}
 			return m, nil
-		case "q":
+		case "q", "enter":
 			m.overlay = OverlayNone
 			m.approvePost("queued")
 		case "esc":
@@ -484,7 +528,7 @@ func (m AppModel) updateDialog(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case OverlayConfirmPublishAll:
 		switch msg.String() {
-		case "y":
+		case "y", "enter":
 			m.overlay = OverlayNone
 			return m, m.publishAllQueued()
 		case "n", "esc":
@@ -657,13 +701,14 @@ func (m *AppModel) toggleLogGroup() {
 func (m *AppModel) publishSelected() tea.Cmd {
 	post := m.selectedQueue()
 	if post == nil {
+		m.statusMsg = "No queued post selected"
 		return nil
 	}
 	if m.pub == nil {
 		m.statusMsg = "Publisher not configured (need R2 + Instagram env vars)"
 		return nil
 	}
-	if err := m.preparePostForPublish(post); err != nil {
+	if _, err := m.preparePostForRetry(post); err != nil {
 		m.statusMsg = fmt.Sprintf("Retry setup failed: %v", err)
 		return nil
 	}
@@ -684,7 +729,7 @@ func (m *AppModel) publishAllQueued() tea.Cmd {
 	firstID := ""
 	for i := range m.queuePosts {
 		post := &m.queuePosts[i]
-		if err := m.preparePostForPublish(post); err != nil {
+		if _, err := m.preparePostForRetry(post); err != nil {
 			m.appendRuntimeLog(fmt.Sprintf("[runtime] Skip %s: %v", post.Manifest.ID, err))
 			continue
 		}
@@ -702,24 +747,66 @@ func (m *AppModel) publishAllQueued() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-func (m *AppModel) preparePostForPublish(post *PostEntry) error {
+func (m *AppModel) retryDeadLetterPost() tea.Cmd {
+	post := m.selectedDeadLetter()
+	if post == nil {
+		m.statusMsg = "No failed post selected"
+		return nil
+	}
+	stage, err := m.preparePostForRetry(post)
+	if err != nil {
+		m.statusMsg = fmt.Sprintf("Retry setup failed: %v", err)
+		return nil
+	}
+	switch stage {
+	case manifest.FailureStagePublish, manifest.FailureStageSyndicate:
+		if m.pub == nil {
+			m.statusMsg = "Retry blocked: publisher not configured"
+			return nil
+		}
+		m.publishing = post.Manifest.ID
+		m.statusMsg = fmt.Sprintf("Retrying publish: %s...", post.Manifest.ID)
+		return runPublish(m.pub, post.Path)
+	case manifest.FailureStageArchive:
+		if m.arch == nil {
+			m.statusMsg = "Retry blocked: archiver not configured"
+			return nil
+		}
+		m.statusMsg = fmt.Sprintf("Retrying archive: %s...", post.Manifest.ID)
+		return runArchive(m.arch, post.Path)
+	default:
+		if m.pipe == nil {
+			m.statusMsg = "Retry blocked: pipeline not configured"
+			return nil
+		}
+		m.pipelining = post.Manifest.ID
+		m.statusMsg = fmt.Sprintf("Retrying pipeline: %s...", post.Manifest.ID)
+		return runPipeline(m.pipe, post.Manifest.SourceDir)
+	}
+}
+
+func (m *AppModel) preparePostForRetry(post *PostEntry) (manifest.FailureStage, error) {
 	if post == nil || post.Manifest == nil {
-		return fmt.Errorf("no post selected")
+		return "", fmt.Errorf("no post selected")
 	}
 	man := post.Manifest
 	if man.State != manifest.StateError {
-		return nil
+		return manifest.FailureStagePublish, nil
 	}
-	if man.Review == nil || man.Review.Decision != "approved" {
-		return fmt.Errorf("post in error state is not approved")
+	stage, err := man.PrepareRetry()
+	if err != nil {
+		return "", err
 	}
-	// Allow retry from queue by restoring approved state first.
-	man.State = manifest.StateApproved
-	man.Errors = nil
+	// For publish-oriented retries, require review approval.
+	if stage == manifest.FailureStagePublish || stage == manifest.FailureStageSyndicate {
+		if man.Review == nil || man.Review.Decision != "approved" {
+			return "", fmt.Errorf("publish retry requires review.decision=approved")
+		}
+	}
 	if err := man.Write(post.Path); err != nil {
-		return fmt.Errorf("write manifest before retry: %w", err)
+		return "", fmt.Errorf("write manifest before retry: %w", err)
 	}
-	return nil
+	return stage, nil
 }
 
 // --- Selectors ---
@@ -736,6 +823,13 @@ func (m *AppModel) selectedQueue() *PostEntry {
 		return nil
 	}
 	return &m.queuePosts[m.queueCursor]
+}
+
+func (m *AppModel) selectedDeadLetter() *PostEntry {
+	if len(m.deadLetterPosts) == 0 || m.deadCursor >= len(m.deadLetterPosts) {
+		return nil
+	}
+	return &m.deadLetterPosts[m.deadCursor]
 }
 
 func (m *AppModel) selectedLogEntry() *LogDisplayEntry {
@@ -801,17 +895,19 @@ func (m AppModel) View() string {
 		remaining = 12
 		configH = bodyH - remaining
 	}
-	pendingH := remaining / 3
-	queueH := remaining / 3
-	publishedH := remaining - pendingH - queueH
+	pendingH := remaining / 4
+	queueH := remaining / 4
+	deadH := remaining / 4
+	publishedH := remaining - pendingH - queueH - deadH
 
 	// Render left panels
 	configPanel := m.renderConfigPanel(leftW, configH)
 	pendingPanel := m.renderPendingPanel(leftW, pendingH)
 	queuePanel := m.renderQueuePanel(leftW, queueH)
+	deadPanel := m.renderDeadLetterPanel(leftW, deadH)
 	publishedPanel := m.renderPublishedPanel(leftW, publishedH)
 
-	leftCol := lipgloss.JoinVertical(lipgloss.Left, configPanel, pendingPanel, queuePanel, publishedPanel)
+	leftCol := lipgloss.JoinVertical(lipgloss.Left, configPanel, pendingPanel, queuePanel, deadPanel, publishedPanel)
 
 	// Split right column into detail (top) + runtime log (bottom).
 	logH := clampInt(bodyH*28/100, 7, 14)
@@ -904,6 +1000,29 @@ func (m AppModel) renderQueuePanel(w, h int) string {
 	return renderPanelChrome(w, h, title, content, m.activePanel == PanelQueue, m.queueCounter())
 }
 
+func (m AppModel) renderDeadLetterPanel(w, h int) string {
+	title := m.panelTitle(fmt.Sprintf("Failed (%d)", len(m.deadLetterPosts)), PanelDeadLetter)
+
+	var lines []string
+	if len(m.deadLetterPosts) == 0 {
+		lines = append(lines, dimTextStyle.Render("(empty)"))
+	}
+	for i, post := range m.deadLetterPosts {
+		stage := string(post.Manifest.EffectiveFailureStage())
+		name := truncate(post.Manifest.ID, w-16)
+		imgCount := fmt.Sprintf("[%d]", len(post.Manifest.Images))
+		line := fmt.Sprintf("! %s %s (%s)", name, imgCount, stage)
+		if i == m.deadCursor && m.activePanel == PanelDeadLetter {
+			line = selectedItemStyle.Render(fmt.Sprintf("▸ %s %s (%s)", name, imgCount, stage))
+		}
+		lines = append(lines, line)
+	}
+
+	lines = tailLines(lines, maxInt(1, h-2))
+	content := strings.Join(lines, "\n")
+	return renderPanelChrome(w, h, title, content, m.activePanel == PanelDeadLetter, m.deadCounter())
+}
+
 func (m AppModel) renderPublishedPanel(w, h int) string {
 	total := 0
 	for _, g := range m.logGroups {
@@ -961,11 +1080,65 @@ func (m AppModel) renderDetailPanel(w, h int) string {
 		content = m.renderPostDetail(m.selectedPending(), w, true)
 	case PanelQueue:
 		content = m.renderPostDetail(m.selectedQueue(), w, false)
+	case PanelDeadLetter:
+		content = m.renderDeadLetterDetail(w)
 	case PanelPublished:
 		content = m.renderLogDetail(w)
 	}
 
 	return renderPanelChrome(w, h, title, content, false, "")
+}
+
+func (m AppModel) renderDeadLetterDetail(w int) string {
+	post := m.selectedDeadLetter()
+	if post == nil {
+		return dimTextStyle.Render("No failed post selected")
+	}
+
+	man := post.Manifest
+	stage := man.EffectiveFailureStage()
+	retryFrom := man.EffectiveRetryState()
+	lastErr := ""
+	if man.Failure != nil && strings.TrimSpace(man.Failure.Message) != "" {
+		lastErr = strings.TrimSpace(man.Failure.Message)
+	} else if len(man.Errors) > 0 {
+		lastErr = strings.TrimSpace(man.Errors[len(man.Errors)-1])
+	}
+
+	var sections []string
+	sections = append(sections, labelStyle.Render("Post"))
+	sections = append(sections, man.ID)
+	sections = append(sections, "")
+	sections = append(sections, labelStyle.Render("Failed Stage"))
+	sections = append(sections, string(stage))
+	sections = append(sections, "")
+	sections = append(sections, labelStyle.Render("Retry From State"))
+	sections = append(sections, string(retryFrom))
+	sections = append(sections, "")
+	sections = append(sections, labelStyle.Render("Current State"))
+	sections = append(sections, string(man.State))
+
+	if lastErr != "" {
+		sections = append(sections, "")
+		sections = append(sections, labelStyle.Render("Last Error"))
+		sections = append(sections, truncate(lastErr, maxInt(20, w-4)))
+	}
+
+	if m.imgCursor < len(man.Images) {
+		img := man.Images[m.imgCursor]
+		sections = append(sections, "")
+		sections = append(sections, labelStyle.Render("Image"))
+		sections = append(
+			sections,
+			fmt.Sprintf("%s [%d/%d]  %dx%d  %s", img.Filename, m.imgCursor+1, len(man.Images), img.Width, img.Height, img.AspectRatio),
+		)
+	}
+
+	sections = append(sections, "")
+	sections = append(sections, dimTextStyle.Render("─── Actions ───"))
+	sections = append(sections, "r  Retry from failed stage")
+	sections = append(sections, "⏎  Open image    ←→ Browse images    ↑↓ Browse posts")
+	return strings.Join(sections, "\n")
 }
 
 func (m AppModel) renderConfigDetail(w int) string {
@@ -1077,11 +1250,8 @@ func (m AppModel) renderPostDetail(post *PostEntry, w int, showActions bool) str
 	} else {
 		sections = append(sections, "")
 		sections = append(sections, dimTextStyle.Render("─── Actions ───"))
-		if man.State == manifest.StateError {
-			sections = append(sections, "p  Retry publish    P  Retry all")
-		} else {
-			sections = append(sections, "p  Publish now      P  Publish all")
-		}
+		sections = append(sections, "⏎  Publish selected (default)")
+		sections = append(sections, "p  Publish selected      P  Publish all")
 		sections = append(sections, "d  Remove from queue")
 	}
 
@@ -1161,6 +1331,7 @@ func (m AppModel) renderStatusBar(w int) string {
 		}
 		parts = append(parts, fmt.Sprintf("%d pending", len(m.pendingPosts)))
 		parts = append(parts, fmt.Sprintf("%d queued", len(m.queuePosts)))
+		parts = append(parts, fmt.Sprintf("%d failed", len(m.deadLetterPosts)))
 		if m.publishing != "" {
 			parts = append(parts, fmt.Sprintf("Publishing: %s...", m.publishing))
 		}
@@ -1234,7 +1405,7 @@ func (m AppModel) renderEditorOverlay(w, h int) string {
 		"",
 		counter,
 		"",
-		dimTextStyle.Render("Ctrl+S: save   Esc: cancel"),
+		dimTextStyle.Render("Enter: save   Shift+Enter/Alt+Enter: newline   Esc: cancel"),
 	)
 
 	return overlayBorder.Width(w * 60 / 100).Render(
@@ -1249,7 +1420,10 @@ func (m AppModel) renderApproveDialog() string {
 		name = post.Manifest.ID
 	}
 
-	content := fmt.Sprintf("Approve %q?\n\n[p] Publish now   [q] Add to queue\n[Esc] Cancel", name)
+	content := fmt.Sprintf(
+		"Approve %q?\n\n[Enter] Add to queue (default)\n[p] Publish now   [q] Add to queue\n[Esc] Cancel",
+		name,
+	)
 	return overlayBorder.Render(labelStyle.Render("Approve Post") + "\n\n" + content)
 }
 
@@ -1265,7 +1439,7 @@ func (m AppModel) renderRejectDialog() string {
 }
 
 func (m AppModel) renderPublishAllDialog() string {
-	content := fmt.Sprintf("Publish all %d queued posts?\n\n[y] Yes   [n] No", len(m.queuePosts))
+	content := fmt.Sprintf("Publish all %d queued posts?\n\n[Enter] Yes (default)\n[y] Yes   [n] No", len(m.queuePosts))
 	return overlayBorder.Render(labelStyle.Render("Publish All") + "\n\n" + content)
 }
 
@@ -1275,7 +1449,7 @@ func (m AppModel) renderHelpOverlay() string {
 		"",
 		dimTextStyle.Render("─── Navigation ───"),
 		"Tab / Shift-Tab    Cycle panels",
-		"1..4               Jump to panel",
+		"1..5               Jump to panel",
 		"↑↓ / j k           Navigate items",
 		"←→ / h l           Browse images",
 		"q                  Quit",
@@ -1290,9 +1464,14 @@ func (m AppModel) renderHelpOverlay() string {
 		"⏎   Open image",
 		"",
 		dimTextStyle.Render("─── Publish Queue ───"),
+		"⏎   Publish selected (default)",
 		"p   Publish selected",
 		"P   Publish all",
 		"d   Remove from queue",
+		"",
+		dimTextStyle.Render("─── Failed (Dead Letter) ───"),
+		"r   Retry from failed stage",
+		"⏎   Open image",
 		"",
 		dimTextStyle.Render("─── Published Log ───"),
 		"⏎   Open permalink",
@@ -1328,6 +1507,8 @@ func (m AppModel) panelIndex(panel Panel) int {
 		return panelIndexPending
 	case PanelQueue:
 		return panelIndexQueue
+	case PanelDeadLetter:
+		return panelIndexDead
 	case PanelPublished:
 		return panelIndexPublished
 	default:
@@ -1470,6 +1651,54 @@ func (m AppModel) queueCounter() string {
 	return counterText(m.queueCursor, len(m.queuePosts))
 }
 
+func (m AppModel) deadCounter() string {
+	return counterText(m.deadCursor, len(m.deadLetterPosts))
+}
+
 func (m AppModel) publishedCounter() string {
-	return counterText(m.logCursor, m.logFlatCount())
+	return counterText(m.publishedLeafCursor(), m.publishedLeafCount())
+}
+
+func (m AppModel) publishedLeafCount() int {
+	total := 0
+	for _, g := range m.logGroups {
+		total += len(g.Entries)
+	}
+	return total
+}
+
+func (m AppModel) publishedLeafCursor() int {
+	totalLeaves := m.publishedLeafCount()
+	if totalLeaves <= 0 {
+		return 0
+	}
+
+	flatIdx := 0
+	leafIdx := -1
+	for _, g := range m.logGroups {
+		// Header row selected. Map it to the next visible leaf if possible.
+		if flatIdx == m.logCursor {
+			nextLeaf := leafIdx + 1
+			if nextLeaf < 0 {
+				nextLeaf = 0
+			}
+			if nextLeaf >= totalLeaves {
+				nextLeaf = totalLeaves - 1
+			}
+			return nextLeaf
+		}
+		flatIdx++
+
+		if g.Collapsed {
+			continue
+		}
+		for range g.Entries {
+			leafIdx++
+			if flatIdx == m.logCursor {
+				return leafIdx
+			}
+			flatIdx++
+		}
+	}
+	return totalLeaves - 1
 }

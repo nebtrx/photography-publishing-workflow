@@ -85,12 +85,12 @@ Introduce a dedicated dead-letter workflow in the TUI for failed posts, with sta
 7. Add/adjust tests and validation.
 
 ## Acceptance Criteria
-- [ ] Failed posts are visible in a dedicated dead-letter panel.
-- [ ] Detail pane for failed posts includes failed stage and last error.
-- [ ] Retry action sends the post back to the correct failed stage path.
-- [ ] Retry behavior is deterministic and test-covered.
-- [ ] Published panel counter shows `x of y` based only on leaf posts.
-- [ ] `/opt/homebrew/bin/go test ./...` passes.
+- [x] Failed posts are visible in a dedicated dead-letter panel.
+- [x] Detail pane for failed posts includes failed stage and last error.
+- [x] Retry action sends the post back to the correct failed stage path.
+- [x] Retry behavior is deterministic and test-covered.
+- [x] Published panel counter shows `x of y` based only on leaf posts.
+- [x] `/opt/homebrew/bin/go test ./...` passes.
 
 ## Out of Scope
 - Automatic retries without user intent.
@@ -99,3 +99,6 @@ Introduce a dedicated dead-letter workflow in the TUI for failed posts, with sta
 
 ## Learnings (append-only)
 - Keep this section updated during execution with real migration edge cases and retry semantics discovered in testing.
+- Implemented with `manifest.Failure` metadata + `PrepareRetry()` so dead-letter retry is stage-aware and backward-compatible with legacy `state=error` manifests.
+- Queue panel now only shows actionable publish states (`approved`, `scheduled`); all failed posts live in the dedicated `[4]-Failed` panel.
+- Published panel footer counter now tracks leaf entries only, so month headers no longer skew `x of y`.

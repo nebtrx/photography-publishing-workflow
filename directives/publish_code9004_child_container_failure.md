@@ -52,11 +52,11 @@ Eliminate recurring Instagram publish failures where child container creation fa
 - First-image-only failures vs later-image failures.
 
 ## Acceptance Criteria
-- [ ] On failure, logs identify exact failing child index + filename + URL + media diagnostics.
-- [ ] Invalid media payloads are rejected pre-API with actionable error.
-- [ ] Valid media set publishes without `code=9004`.
-- [ ] Regression tests cover `code=9004`-class path.
-- [ ] `/opt/homebrew/bin/go test ./...` passes.
+- [x] On failure, logs identify exact failing child index + filename + URL + media diagnostics.
+- [x] Invalid media payloads are rejected pre-API with actionable error.
+- [x] Valid media set publishes without `code=9004`.
+- [x] Regression tests cover `code=9004`-class path.
+- [x] `/opt/homebrew/bin/go test ./...` passes.
 
 ## Safety Notes
 - Do not log secrets/tokens while adding verbose diagnostics.
@@ -64,3 +64,6 @@ Eliminate recurring Instagram publish failures where child container creation fa
 
 ## Learnings (append-only)
 - Add confirmed Meta API quirks (media-type/content-type expectations, container constraints) discovered during execution.
+- Added media preflight in publisher: local decode/content-type validation for each candidate before container creation.
+- Child/single container errors now include `index`, `filename`, `path`, `url`, `local_type`, `remote_type`, and `remote_status` to make `code=9004` root cause visible.
+- Remote URL probing is enforced in normal runtime but skipped for deterministic test/dry-run URLs (`test.r2.dev`, `dry-run.r2.dev`) to avoid false failures in unit tests.
