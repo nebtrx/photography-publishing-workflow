@@ -53,6 +53,21 @@ func waitForWatcher(ch <-chan tea.Msg) tea.Cmd {
 	}
 }
 
+// runPipeline runs pipeline for a given post directory in a background goroutine.
+func runPipeline(p *pipeline.Pipeline, postDir string) tea.Cmd {
+	return func() tea.Msg {
+		if p == nil {
+			return PipelineCompleteMsg{Err: nil}
+		}
+		result := p.Run(context.Background(), postDir)
+		return PipelineCompleteMsg{
+			PostID:       result.PostID,
+			ManifestPath: result.ManifestPath,
+			Err:          result.Error,
+		}
+	}
+}
+
 // runPublish runs the publisher in a background goroutine for a single post.
 func runPublish(pub *publisher.Publisher, manifestPath string) tea.Cmd {
 	return func() tea.Msg {

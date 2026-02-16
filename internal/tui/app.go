@@ -360,7 +360,7 @@ func (m AppModel) updatePending(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.overlay = OverlayConfirmReject
 		}
 	case "R":
-		m.reEnrich()
+		return m, m.reEnrich()
 	}
 	return m, nil
 }
@@ -567,16 +567,32 @@ func (m *AppModel) toggleStory() {
 	m.statusMsg = fmt.Sprintf("Story: %s", state)
 }
 
-func (m *AppModel) reEnrich() {
+func (m *AppModel) reEnrich() tea.Cmd {
 	post := m.selectedPending()
 	if post == nil {
-		return
+		return nil
 	}
-	post.Manifest.State = manifest.StateValidated
+	if err := post.Manifest.Transition(manifest.StateValidated); err != nil {
+		m.statusMsg = fmt.Sprintf("Re-enrich failed: %v", err)
+		return nil
+	}
 	post.Manifest.Enrichment = nil
-	post.Manifest.Write(post.Path)
-	m.statusMsg = fmt.Sprintf("Re-enrich queued: %s", post.Manifest.ID)
+	if err := post.Manifest.Write(post.Path); err != nil {
+		m.statusMsg = fmt.Sprintf("Re-enrich failed: %v", err)
+		return nil
+	}
+
+	// In unified TUI mode, run pipeline immediately so the post returns to
+	// pending_review without disappearing indefinitely in validated state.
+	if m.pipe != nil {
+		m.pipelining = post.Manifest.ID
+		m.statusMsg = fmt.Sprintf("Re-enriching: %s...", post.Manifest.ID)
+		return runPipeline(m.pipe, post.Manifest.SourceDir)
+	}
+
+	m.statusMsg = fmt.Sprintf("Re-enrich queued: %s (pipeline unavailable)", post.Manifest.ID)
 	m.loadData()
+	return nil
 }
 
 func (m *AppModel) dequeuePost() {

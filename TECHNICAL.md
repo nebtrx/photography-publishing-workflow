@@ -828,3 +828,25 @@ Store value indicated `meta.user_expires_at` was written near current time.
 
 **Result:**
 - Repo keeps a canonical non-secret config template while local secret config remains private.
+
+## 2026-02-16 — Unified TUI re-enrich now executes pipeline immediately
+**Context:** In unified TUI, pressing `R` (re-enrich) changed post state to `validated` and cleared enrichment, but did not run pipeline. Result: post disappeared from Pending Review (loader only shows `pending_review` / queue states).
+
+**Implemented:**
+- `internal/tui/app.go`
+  - `updatePending("R")` now returns command from `reEnrich()`.
+  - `reEnrich()` now:
+    - uses valid transition `pending_review -> validated`
+    - clears enrichment + writes manifest
+    - if pipeline dependency exists, sets `pipelining` status and starts background pipeline run immediately via `runPipeline(...)`
+    - falls back to explicit status message when pipeline is unavailable
+- `internal/tui/background.go`
+  - added `runPipeline(...)` helper returning `PipelineCompleteMsg`.
+- Added tests:
+  - `internal/tui/reenrich_test.go`
+    - verifies persistence/transition behavior without pipeline
+    - verifies command dispatch + status when pipeline is configured
+
+**Validation:**
+- `/opt/homebrew/bin/go test ./internal/tui -count=1` passed
+- `/opt/homebrew/bin/go test ./...` passed
