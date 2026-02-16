@@ -1039,3 +1039,38 @@ Store value indicated `meta.user_expires_at` was written near current time.
 - `gofmt -w` on all touched files
 - `/opt/homebrew/bin/go mod tidy`
 - `/opt/homebrew/bin/go test ./...` passed
+
+## 2026-02-16 — Publish fix: auto-normalize oversized JPEGs before R2 upload
+**Context:** Real run still failed on Instagram carousel child creation with Meta `code=9004` even though URL/content-type/status checks passed (`image/jpeg`, `200`). Failing source files were very large (often 9MB–13MB).
+
+**Diagnosis:**
+- Request shape and token flow were valid.
+- Local decode checks and preflight content-type checks were passing.
+- Most batch files exceeded conservative Instagram-compatible upload size budgets.
+- Result: Meta rejected child creation with generic `Only photo or video can be accepted as media type` even for JPEG URLs.
+
+**Implemented fix:**
+- `internal/publisher/publisher.go`
+  - Added automatic JPEG normalization in upload stage for oversized files:
+    - new limit constant: `maxInstagramImageBytes = 8*1024*1024`
+    - new helper: `prepareImageUploadSource(path)`
+    - oversized `.jpg/.jpeg` images are re-encoded to temp JPEG with descending quality (85→45) until <=8MB
+    - normalized temp file is uploaded to R2 and immediately cleaned up
+    - runtime log now shows normalization details (`original bytes -> upload bytes`)
+  - Non-JPEG oversized files now fail early with explicit actionable error.
+- `internal/publisher/publisher_test.go`
+  - Added `TestPrepareImageUploadSource_NormalizesOversizedJPEG`.
+
+**Validation:**
+- `gofmt -w internal/publisher/publisher.go internal/publisher/publisher_test.go`
+- `/opt/homebrew/bin/go test ./internal/publisher ./internal/tui ./internal/manifest ./internal/pipeline`
+- `/opt/homebrew/bin/go test ./...`
+- all passed.
+
+**Follow-up fix (same date):**
+- Publish retries now force fresh upload artifacts for `stage=publish` failures:
+  - `internal/publisher/publisher.go`: when retrying from `state=error` and `failure.stage=publish`, clear stale `publishing.container_ids`, `publishing.r2_keys`, `publishing.r2_urls`, and prior IG IDs before re-run.
+  - `internal/tui/app.go`: dead-letter retry prep mirrors the same clearing logic before writing manifest.
+- Added/updated tests:
+  - `internal/publisher/publisher_test.go`: `TestPublish_RetryFromErrorStateWhenApproved` now verifies stale artifacts are cleared and media is re-uploaded.
+  - `internal/tui/loader_test.go`: retry prep test now verifies publish artifacts are cleared.

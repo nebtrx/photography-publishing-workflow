@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	_ "image/jpeg"
+	"image/jpeg"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -35,9 +37,10 @@ type InstagramAPI interface {
 }
 
 const (
-	pollInterval = 5 * time.Second
-	maxPolls     = 60
-	maxCarousel  = 10
+	pollInterval           = 5 * time.Second
+	maxPolls               = 60
+	maxCarousel            = 10
+	maxInstagramImageBytes = 8 * 1024 * 1024
 )
 
 // Publisher orchestrates the publishing flow.
@@ -112,8 +115,12 @@ func (p *Publisher) Publish(ctx context.Context, m *manifest.Manifest, manifestP
 	// Retry convenience: allow re-running publish on previously approved posts
 	// that failed and ended in error state.
 	if m.State == manifest.StateError && m.Review != nil && m.Review.Decision == "approved" {
-		if _, err := m.PrepareRetry(); err != nil {
+		stage, err := m.PrepareRetry()
+		if err != nil {
 			return fmt.Errorf("prepare retry: %w", err)
+		}
+		if stage == manifest.FailureStagePublish {
+			p.resetPublishArtifactsForRetry(m)
 		}
 		if err := m.Write(manifestPath); err != nil {
 			return fmt.Errorf("write manifest before retry: %w", err)
@@ -279,6 +286,23 @@ func (p *Publisher) Publish(ctx context.Context, m *manifest.Manifest, manifestP
 	return nil
 }
 
+func (p *Publisher) resetPublishArtifactsForRetry(m *manifest.Manifest) {
+	if m == nil {
+		return
+	}
+	if m.Publishing == nil {
+		m.Publishing = &manifest.Publishing{}
+		return
+	}
+	m.Publishing.ContainerIDs = nil
+	m.Publishing.R2Keys = nil
+	m.Publishing.R2URLs = nil
+	m.Publishing.R2Cleaned = false
+	m.Publishing.InstagramPostID = ""
+	m.Publishing.Permalink = ""
+	m.Publishing.InstagramStoryID = ""
+}
+
 // uploadImages uploads all images to R2, skipping if already done (resume case).
 func (p *Publisher) uploadImages(ctx context.Context, m *manifest.Manifest, manifestPath string) error {
 	// If R2 keys already exist and match image count, skip (resume case)
@@ -292,21 +316,42 @@ func (p *Publisher) uploadImages(ctx context.Context, m *manifest.Manifest, mani
 
 	for _, img := range m.Images {
 		key := fmt.Sprintf("posts/%s/%s", m.ID, img.Filename)
+		src, err := prepareImageUploadSource(img.Path)
+		if err != nil {
+			return fmt.Errorf("prepare %s for upload: %w", img.Filename, err)
+		}
+		cleanup := src.Cleanup
+		runCleanup := func() {
+			if cleanup != nil {
+				cleanup()
+				cleanup = nil
+			}
+		}
 
-		publicURL, err := p.host.Upload(ctx, key, img.Path)
+		publicURL, err := p.host.Upload(ctx, key, src.Path)
 		if err != nil {
 			// Retry once
 			p.logger.Printf("Upload failed for %s, retrying: %v", img.Filename, err)
-			publicURL, err = p.host.Upload(ctx, key, img.Path)
+			publicURL, err = p.host.Upload(ctx, key, src.Path)
 			if err != nil {
+				runCleanup()
 				// Cleanup already uploaded
 				p.cleanupKeys(ctx, keys)
 				return fmt.Errorf("upload %s (after retry): %w", img.Filename, err)
 			}
 		}
+		runCleanup()
 
 		keys = append(keys, key)
 		urls = append(urls, publicURL)
+		if src.Normalized {
+			p.logger.Printf(
+				"Normalized %s for Instagram upload: %d bytes -> %d bytes",
+				img.Filename,
+				src.OriginalSize,
+				src.UploadSize,
+			)
+		}
 		p.logger.Printf("Uploaded %s → %s", img.Filename, publicURL)
 	}
 
@@ -319,6 +364,106 @@ func (p *Publisher) uploadImages(ctx context.Context, m *manifest.Manifest, mani
 	}
 
 	return nil
+}
+
+type uploadSource struct {
+	Path         string
+	Cleanup      func()
+	Normalized   bool
+	OriginalSize int64
+	UploadSize   int64
+}
+
+func prepareImageUploadSource(path string) (uploadSource, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return uploadSource{}, err
+	}
+	src := uploadSource{
+		Path:         path,
+		OriginalSize: info.Size(),
+		UploadSize:   info.Size(),
+	}
+	if info.Size() <= maxInstagramImageBytes {
+		return src, nil
+	}
+
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext != ".jpg" && ext != ".jpeg" {
+		return uploadSource{}, fmt.Errorf(
+			"file exceeds instagram image size limit (%d bytes > %d bytes) and auto-normalization only supports JPEG: %s",
+			info.Size(),
+			maxInstagramImageBytes,
+			path,
+		)
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return uploadSource{}, err
+	}
+	defer f.Close()
+
+	img, _, err := image.Decode(f)
+	if err != nil {
+		return uploadSource{}, fmt.Errorf("decode jpeg for normalization: %w", err)
+	}
+
+	qualities := []int{85, 80, 75, 70, 65, 60, 55, 50, 45}
+	bestPath := ""
+	bestSize := int64(math.MaxInt64)
+	for _, q := range qualities {
+		tmp, err := os.CreateTemp("", "ppw-ig-normalized-*.jpg")
+		if err != nil {
+			return uploadSource{}, fmt.Errorf("create temp file for normalization: %w", err)
+		}
+		tmpPath := tmp.Name()
+		encErr := jpeg.Encode(tmp, img, &jpeg.Options{Quality: q})
+		closeErr := tmp.Close()
+		if encErr != nil || closeErr != nil {
+			_ = os.Remove(tmpPath)
+			if encErr != nil {
+				continue
+			}
+			return uploadSource{}, closeErr
+		}
+
+		tmpInfo, err := os.Stat(tmpPath)
+		if err != nil {
+			_ = os.Remove(tmpPath)
+			continue
+		}
+		size := tmpInfo.Size()
+		if size < bestSize {
+			if bestPath != "" {
+				_ = os.Remove(bestPath)
+			}
+			bestPath = tmpPath
+			bestSize = size
+		} else {
+			_ = os.Remove(tmpPath)
+		}
+
+		if size <= maxInstagramImageBytes {
+			finalPath := bestPath
+			return uploadSource{
+				Path:         finalPath,
+				Cleanup:      func() { _ = os.Remove(finalPath) },
+				Normalized:   true,
+				OriginalSize: info.Size(),
+				UploadSize:   size,
+			}, nil
+		}
+	}
+
+	if bestPath != "" {
+		_ = os.Remove(bestPath)
+	}
+	return uploadSource{}, fmt.Errorf(
+		"file exceeds instagram image size limit (%d bytes > %d bytes) and normalization could not reduce it enough",
+		info.Size(),
+		maxInstagramImageBytes,
+	)
 }
 
 func (p *Publisher) preflightMedia(ctx context.Context, m *manifest.Manifest) ([]mediaCandidate, error) {

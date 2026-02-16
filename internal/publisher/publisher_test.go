@@ -3,6 +3,9 @@ package publisher
 import (
 	"context"
 	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"os"
 	"path/filepath"
 	"strings"
@@ -431,12 +434,21 @@ func TestPublish_RetryFromErrorStateWhenApproved(t *testing.T) {
 	m, mPath := setupApprovedManifest(t)
 	m.Images = m.Images[:1]
 	m.State = manifest.StateError
+	m.RecordFailure(manifest.FailureStagePublish, "previous publish failure", manifest.StateApproved)
 	m.Errors = []string{"previous failure"}
+	m.Publishing = &manifest.Publishing{
+		ContainerIDs:    &manifest.ContainerIDs{Single: "stale_single"},
+		R2Keys:          []string{"posts/retry/stale.jpg"},
+		R2URLs:          []string{"https://test.r2.dev/posts/retry/stale.jpg"},
+		InstagramPostID: "stale_media",
+		Permalink:       "https://instagram.test/p/stale",
+	}
 	if err := m.Write(mPath); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
-	pub := New(hosting.NewMemoryHost(), newMockInstagram(), Options{})
+	memHost := hosting.NewMemoryHost()
+	pub := New(memHost, newMockInstagram(), Options{})
 	if err := pub.Publish(context.Background(), m, mPath); err != nil {
 		t.Fatalf("Publish retry from error: %v", err)
 	}
@@ -447,6 +459,9 @@ func TestPublish_RetryFromErrorStateWhenApproved(t *testing.T) {
 	}
 	if saved.State != manifest.StatePublished {
 		t.Fatalf("state = %q, want %q", saved.State, manifest.StatePublished)
+	}
+	if len(memHost.Uploaded) != 1 {
+		t.Fatalf("retry publish should re-upload media after clearing stale artifacts, uploaded=%d", len(memHost.Uploaded))
 	}
 }
 
@@ -771,5 +786,65 @@ func TestPublish_PreflightRejectsInvalidLocalMedia(t *testing.T) {
 	}
 	if saved.Failure == nil || saved.Failure.Stage != manifest.FailureStagePublish {
 		t.Fatalf("failure metadata = %#v, want stage=%q", saved.Failure, manifest.FailureStagePublish)
+	}
+}
+
+func TestPrepareImageUploadSource_NormalizesOversizedJPEG(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "oversized.jpg")
+
+	img := image.NewRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(x * 10), G: uint8(y * 10), B: 128, A: 255})
+		}
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create seed image: %v", err)
+	}
+	if err := jpeg.Encode(f, img, &jpeg.Options{Quality: 85}); err != nil {
+		_ = f.Close()
+		t.Fatalf("encode seed image: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close seed image: %v", err)
+	}
+
+	padding := make([]byte, maxInstagramImageBytes+1024)
+	wf, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open for append: %v", err)
+	}
+	if _, err := wf.Write(padding); err != nil {
+		_ = wf.Close()
+		t.Fatalf("append padding: %v", err)
+	}
+	if err := wf.Close(); err != nil {
+		t.Fatalf("close append handle: %v", err)
+	}
+
+	src, err := prepareImageUploadSource(path)
+	if err != nil {
+		t.Fatalf("prepareImageUploadSource: %v", err)
+	}
+	if !src.Normalized {
+		t.Fatal("expected normalized source for oversized jpeg")
+	}
+	if src.Path == path {
+		t.Fatal("expected normalized path to be temp file")
+	}
+	if src.UploadSize > maxInstagramImageBytes {
+		t.Fatalf("upload size = %d, want <= %d", src.UploadSize, maxInstagramImageBytes)
+	}
+	if src.Cleanup == nil {
+		t.Fatal("expected cleanup function for normalized source")
+	}
+	if _, err := os.Stat(src.Path); err != nil {
+		t.Fatalf("normalized temp file missing: %v", err)
+	}
+	src.Cleanup()
+	if _, err := os.Stat(src.Path); !os.IsNotExist(err) {
+		t.Fatalf("expected temp file to be removed, stat err=%v", err)
 	}
 }

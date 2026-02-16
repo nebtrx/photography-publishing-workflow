@@ -55,6 +55,14 @@ func TestPreparePostForRetry_RecoversErrorState(t *testing.T) {
 		t.Fatalf("read manifest: %v", err)
 	}
 	man.RecordFailure(manifest.FailureStagePublish, "old error", manifest.StateApproved)
+	man.Publishing = &manifest.Publishing{
+		ContainerIDs:     &manifest.ContainerIDs{Single: "old_container"},
+		R2Keys:           []string{"posts/retry-me/old.jpg"},
+		R2URLs:           []string{"https://test.r2.dev/posts/retry-me/old.jpg"},
+		InstagramPostID:  "old_media",
+		InstagramStoryID: "old_story",
+		Permalink:        "https://instagram.test/p/old",
+	}
 	if err := man.Write(manifestPath); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
@@ -78,6 +86,17 @@ func TestPreparePostForRetry_RecoversErrorState(t *testing.T) {
 	}
 	if reloaded.Failure != nil {
 		t.Fatalf("failure should be cleared, got %#v", reloaded.Failure)
+	}
+	if reloaded.Publishing != nil {
+		if len(reloaded.Publishing.R2Keys) != 0 || len(reloaded.Publishing.R2URLs) != 0 {
+			t.Fatalf("publishing R2 artifacts should be cleared on publish retry, got keys=%d urls=%d", len(reloaded.Publishing.R2Keys), len(reloaded.Publishing.R2URLs))
+		}
+		if reloaded.Publishing.ContainerIDs != nil {
+			t.Fatalf("container ids should be cleared on publish retry, got %#v", reloaded.Publishing.ContainerIDs)
+		}
+		if reloaded.Publishing.InstagramPostID != "" || reloaded.Publishing.InstagramStoryID != "" || reloaded.Publishing.Permalink != "" {
+			t.Fatalf("instagram publish outputs should be cleared on publish retry, got post=%q story=%q permalink=%q", reloaded.Publishing.InstagramPostID, reloaded.Publishing.InstagramStoryID, reloaded.Publishing.Permalink)
+		}
 	}
 }
 

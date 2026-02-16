@@ -797,6 +797,17 @@ func (m *AppModel) preparePostForRetry(post *PostEntry) (manifest.FailureStage, 
 	if err != nil {
 		return "", err
 	}
+	if stage == manifest.FailureStagePublish {
+		if man.Publishing != nil {
+			man.Publishing.ContainerIDs = nil
+			man.Publishing.R2Keys = nil
+			man.Publishing.R2URLs = nil
+			man.Publishing.R2Cleaned = false
+			man.Publishing.InstagramPostID = ""
+			man.Publishing.Permalink = ""
+			man.Publishing.InstagramStoryID = ""
+		}
+	}
 	// For publish-oriented retries, require review approval.
 	if stage == manifest.FailureStagePublish || stage == manifest.FailureStageSyndicate {
 		if man.Review == nil || man.Review.Decision != "approved" {
