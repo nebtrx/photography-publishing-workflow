@@ -25,6 +25,123 @@ This repo currently supports a full lifecycle from scan to publish/archive, with
 - `TECHNICAL.md`
   - Append-only decisions and implementation memory log.
 
+## System Flow Diagram (Mermaid)
+
+```mermaid
+flowchart LR
+  user[Photographer / Operator]
+
+  subgraph ui["Operator Surface"]
+    tui["Unified TUI (ppw)"]
+    cli["CLI Commands (ppw <cmd>)"]
+  end
+
+  subgraph runtime["Core Runtime (internal/*)"]
+    watcher["watcher\n(fs events on inbox)"]
+    pipeline["pipeline\n(scan -> validate -> enrich)"]
+    scanner["scanner"]
+    validator["validator"]
+    enricher["enricher"]
+    publisher["publisher"]
+    syndication["syndication\n(facebook + threads)"]
+    archiver["archiver"]
+    scheduler["scheduler"]
+    logsCmd["logs reader/filter (ppw logs)"]
+  end
+
+  subgraph state["State + Files"]
+    inbox["Watch Inbox\n(post directories + images)"]
+    manifest["manifest.json\n(per-post state contract)"]
+    archiveDir["Archive Directory"]
+    publishLog["archive/publish.log\n(JSONL published index)"]
+    runtimeLog["~/.ppw/ppw.log"]
+    jobLogs["~/.ppw/logs/jobs/*.jsonl"]
+    tokenStore["~/.ppw/tokens.json"]
+    cfg["config/ppw.toml"]
+  end
+
+  subgraph auth["Auth + API Clients"]
+    authn["authn manager"]
+    authstore["authstore"]
+    igClient["instagram client"]
+    fbClient["facebook syndication client"]
+    threadsClient["threads syndication client"]
+  end
+
+  subgraph external["Third-Party Services"]
+    codex["Codex CLI / API"]
+    claude["Claude CLI"]
+    r2["Cloudflare R2"]
+    igApi["Meta Graph API\n(Instagram Publishing)"]
+    fbApi["Meta Graph API\n(Facebook Pages)"]
+    threadsApi["Threads API"]
+  end
+
+  user --> tui
+  user --> cli
+
+  cfg --> tui
+  cfg --> cli
+  cfg --> authn
+
+  tui --> watcher
+  cli --> watcher
+  watcher --> inbox
+  watcher --> pipeline
+
+  cli --> pipeline
+  pipeline --> scanner --> manifest
+  pipeline --> validator --> manifest
+  pipeline --> enricher --> manifest
+
+  enricher --> codex
+  enricher --> claude
+
+  tui --> publisher
+  cli --> publisher
+  scheduler --> publisher
+
+  publisher --> authn
+  authn --> authstore
+  authstore --> tokenStore
+
+  authn --> igClient
+  publisher --> igClient
+  igClient --> igApi
+
+  publisher --> r2
+  r2 --> manifest
+
+  publisher --> syndication
+  syndication --> fbClient --> fbApi
+  syndication --> threadsClient --> threadsApi
+
+  publisher --> manifest
+  publisher --> archiver
+  archiver --> archiveDir
+  archiver --> publishLog
+
+  watcher --> runtimeLog
+  pipeline --> runtimeLog
+  enricher --> runtimeLog
+  publisher --> runtimeLog
+
+  pipeline --> jobLogs
+  publisher --> jobLogs
+  archiver --> jobLogs
+  logsCmd --> runtimeLog
+  logsCmd --> jobLogs
+```
+
+### What This Diagram Represents
+
+- `manifest.json` is the per-post source of truth for workflow state (`scanned`, `validated`, `pending_review`, `approved`, `publishing`, `published`, `error`, etc.).
+- Watcher + pipeline move new inbox posts into review-ready manifests.
+- Enricher calls the configured AI backend (`codex` or `claude`) for caption/location/music.
+- Publisher uploads media to R2, publishes to Instagram, optionally syndicates to Facebook/Threads, then archives.
+- Auth is managed through token lifecycle components (`authn` + `authstore`) backed by `~/.ppw/tokens.json`.
+- Runtime and per-job logs are persisted and queryable via `ppw logs`.
+
 ## Main Workflow
 
 Pipeline stages in this repository:
