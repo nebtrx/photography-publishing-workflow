@@ -120,6 +120,38 @@ func TestFormatLogEntry(t *testing.T) {
 	}
 }
 
+func TestCollectLogEntries_ParsesPrefixedJSONLines(t *testing.T) {
+	base := t.TempDir()
+	jobsDir := filepath.Join(base, "jobs")
+	if err := os.MkdirAll(jobsDir, 0o700); err != nil {
+		t.Fatalf("mkdir jobs dir: %v", err)
+	}
+
+	path := filepath.Join(jobsDir, "publish-1.failed.1739600100.jsonl")
+	lines := []string{
+		`[publish] 2026/02/16 01:17:19 {"ts":"2026-02-16T00:17:19Z","type":"result","module":"publisher","post_id":"rotterdam-surprise-snow","action":"publish_instagram","outcome":"failure","error":"boom"}`,
+		`[publish] Uploaded file -> https://example.com/file.jpg`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("write prefixed log file: %v", err)
+	}
+
+	entries, err := collectLogEntries(joblog.Config{LogDir: base}, logQuery{
+		PostID:  "rotterdam-surprise-snow",
+		Outcome: "failure",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("collectLogEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries=%d, want 1", len(entries))
+	}
+	if entries[0].Event.Module != "publisher" || entries[0].Event.Action != "publish_instagram" {
+		t.Fatalf("unexpected event: %+v", entries[0].Event)
+	}
+}
+
 func writeEvents(t *testing.T, path string, events []obslog.Event) {
 	t.Helper()
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)

@@ -891,3 +891,20 @@ Store value indicated `meta.user_expires_at` was written near current time.
 **Validation:**
 - `/opt/homebrew/bin/go test ./internal/tui -count=1` passed
 - `/opt/homebrew/bin/go test ./...` passed
+
+## 2026-02-16 — `ppw logs` parser fix for prefixed runtime lines
+**Context:** `ppw logs` returned "No log events matched filters" even when failures existed in job log files.
+
+**Root cause:**
+- Job log files contain prefixed lines (e.g., `[pipeline] ... {json}`), but parser only attempted full-line JSON unmarshal.
+
+**Implemented:**
+- `cmd/ppw/logs.go`
+  - added `parseEventFromLine(...)` to extract and parse embedded JSON object from prefixed lines.
+- `cmd/ppw/logs_test.go`
+  - added regression test `TestCollectLogEntries_ParsesPrefixedJSONLines`.
+
+**Validation:**
+- `/opt/homebrew/bin/go test ./cmd/ppw -count=1` passed
+- `/opt/homebrew/bin/go test ./...` passed
+- rebuilt binary; `./bin/ppw logs --post-id rotterdam-surprise-snow --outcome failure --since 24h` now returns failures.

@@ -181,8 +181,8 @@ func collectFromFile(path string, q logQuery) ([]logEntry, error) {
 		if raw == "" {
 			continue
 		}
-		var event obslog.Event
-		if err := json.Unmarshal([]byte(raw), &event); err != nil {
+		event, ok := parseEventFromLine(raw)
+		if !ok {
 			continue
 		}
 		if event.JobID == "" {
@@ -198,6 +198,33 @@ func collectFromFile(path string, q logQuery) ([]logEntry, error) {
 		return nil, fmt.Errorf("scan log file %s: %w", path, err)
 	}
 	return out, nil
+}
+
+func parseEventFromLine(raw string) (obslog.Event, bool) {
+	var event obslog.Event
+
+	// Fast path: full line is JSON.
+	if json.Unmarshal([]byte(raw), &event) == nil {
+		return event, true
+	}
+
+	// Runtime/job log lines are often prefixed, e.g.
+	// "[pipeline] 2026/... { ...json... }"
+	start := strings.Index(raw, "{")
+	end := strings.LastIndex(raw, "}")
+	if start < 0 || end <= start {
+		return obslog.Event{}, false
+	}
+
+	candidate := strings.TrimSpace(raw[start : end+1])
+	if candidate == "" {
+		return obslog.Event{}, false
+	}
+	if json.Unmarshal([]byte(candidate), &event) != nil {
+		return obslog.Event{}, false
+	}
+
+	return event, true
 }
 
 func matchLogQuery(event obslog.Event, q logQuery) bool {
